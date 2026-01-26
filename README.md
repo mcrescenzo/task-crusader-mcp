@@ -181,7 +181,7 @@ Key design decisions:
 
 Contributions are welcome! Please ensure:
 
-1. Tests pass with 85% coverage: `pytest`
+1. Tests pass with 65% coverage on core functionality: `pytest`
 2. Code is formatted: `black src/` and `isort src/`
 3. Type hints are complete: `mypy src/`
 

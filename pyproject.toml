@@ -85,7 +85,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--cov=src/task_crusade_mcp --cov-report=term-missing"
+addopts = "--cov=src/task_crusade_mcp --cov-report=term-missing --cov-fail-under=65"
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",

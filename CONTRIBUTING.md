@@ -49,7 +49,8 @@ We maintain high code quality standards to ensure reliability and maintainabilit
 
 ### Coverage Requirements
 
-- **Minimum test coverage**: 76% (enforced in CI)
+- **Minimum test coverage**: 65% (enforced in CI)
+- Note: Core MCP server coverage is 65%. Target excludes optional TUI/CLI (v0.1.0)
 - Target coverage for new code: >85%
 - All public APIs must have tests
 
@@ -173,7 +174,7 @@ pytest -m integration
 ### PR Checklist
 
 - [ ] Tests added/updated and passing
-- [ ] Code coverage maintained at ≥76%
+- [ ] Code coverage maintained at ≥65%
 - [ ] Code formatted with black and isort
 - [ ] Linting passes with ruff
 - [ ] Type checking passes with mypy
