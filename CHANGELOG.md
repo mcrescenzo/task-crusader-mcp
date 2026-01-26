@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQLite database with automatic migrations via Alembic
 - Memory system for AI context management
 - Comprehensive integration tests with 76% code coverage
-- Support for Python 3.9-3.13
+- Support for Python 3.10-3.13
 
 ### Features
 - **Campaign Management**: Create, update, list, and delete campaigns
