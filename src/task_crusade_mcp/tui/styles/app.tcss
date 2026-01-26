@@ -1,0 +1,875 @@
+/* Task Crusade TUI - Main Stylesheet
+ * =====================================
+ *
+ * This stylesheet provides consistent theming across all TUI widgets.
+ * It uses Textual CSS variables for theme compatibility (light/dark terminals).
+ */
+
+
+/* =============================================================================
+ * STATUS COLORS
+ * Maps task/campaign statuses to semantic colors
+ * ============================================================================= */
+
+.status-done {
+    color: $success;
+}
+
+.status-in-progress {
+    color: $warning;
+}
+
+.status-pending {
+    color: $text-muted;
+}
+
+.status-cancelled {
+    color: $error;
+}
+
+.status-blocked {
+    color: $error;
+}
+
+
+/* =============================================================================
+ * TABBED PANE WIDGETS
+ * CampaignTaskPane fills its parent container
+ * ============================================================================= */
+
+CampaignTaskPane {
+    width: 100%;
+    height: 100%;
+}
+
+
+/* =============================================================================
+ * MAIN LAYOUT - Pane Containers
+ * Three-pane horizontal layout: Campaign (20%) | Tasks (40%) | Detail (40%)
+ * ============================================================================= */
+
+#pane-container {
+    width: 100%;
+    height: 100%;
+}
+
+/* Campaign Pane (Left - 20%) */
+#campaign-pane {
+    width: 20%;
+    height: 100%;
+    border: solid $primary;
+}
+
+#campaign-pane-header {
+    width: 100%;
+    height: 1;
+    background: $primary;
+    color: $text;
+    text-align: center;
+    text-style: bold;
+}
+
+/* Task Pane (Center - 40%) */
+#task-pane {
+    width: 40%;
+    height: 100%;
+    border: solid $primary;
+}
+
+#task-pane-header {
+    width: 100%;
+    height: 1;
+    background: $primary;
+    color: $text;
+    text-align: center;
+    text-style: bold;
+}
+
+/* Detail Pane (Right - 40%) */
+#detail-pane {
+    width: 40%;
+    height: 100%;
+    border: solid $primary;
+}
+
+#detail-pane-header {
+    width: 100%;
+    height: 1;
+    background: $primary;
+    color: $text;
+    text-align: center;
+    text-style: bold;
+}
+
+/* Pane content containers */
+.pane-content {
+    width: 100%;
+    height: 1fr;
+}
+
+
+/* =============================================================================
+ * FOCUS STATES
+ * Visual feedback when panes receive focus
+ * ============================================================================= */
+
+#campaign-pane:focus-within {
+    border: solid $accent;
+}
+
+#campaign-pane:focus-within #campaign-pane-header {
+    background: $accent;
+}
+
+#task-pane:focus-within {
+    border: solid $accent;
+}
+
+#task-pane:focus-within #task-pane-header {
+    background: $accent;
+}
+
+#detail-pane:focus-within {
+    border: solid $accent;
+}
+
+#detail-pane:focus-within #detail-pane-header {
+    background: $accent;
+}
+
+
+/* =============================================================================
+ * CAMPAIGN LIST WIDGET
+ * Left pane displaying campaigns with progress bars
+ * ============================================================================= */
+
+#campaign-list {
+    width: 100%;
+    height: 100%;
+}
+
+CampaignListWidget {
+    width: 100%;
+    height: 100%;
+}
+
+CampaignListWidget > ListItem {
+    padding: 0;
+    height: auto;
+}
+
+CampaignListWidget > ListItem.--highlight {
+    background: $accent;
+}
+
+.campaign-name {
+    text-style: bold;
+    color: $text;
+}
+
+.campaign-progress {
+    color: $text-muted;
+}
+
+.campaign-task-count {
+    color: $text-muted;
+}
+
+.campaign-priority {
+    margin: 0;
+}
+
+.campaign-search-input {
+    dock: top;
+    width: 100%;
+    height: 1;
+    background: $surface;
+    border: none;
+    padding: 0 1;
+}
+
+.campaign-search-input:focus {
+    border: none;
+    background: $primary-darken-1;
+}
+
+.campaign-search-input.-hidden {
+    display: none;
+}
+
+
+/* =============================================================================
+ * TASK LIST WIDGET
+ * Center pane displaying tasks for selected campaign
+ * ============================================================================= */
+
+#task-list {
+    width: 100%;
+    height: 100%;
+}
+
+TaskListWidget {
+    width: 100%;
+    height: 100%;
+}
+
+TaskListWidget > ListItem {
+    padding: 0;
+    height: auto;
+}
+
+TaskListWidget > ListItem.--highlight {
+    background: $accent;
+}
+
+TaskListWidget > ListItem.--multi-selected {
+    background: $primary-darken-2;
+}
+
+.task-title {
+    text-style: bold;
+    color: $text;
+}
+
+.task-deps {
+    color: $text-muted;
+}
+
+.task-priority {
+    margin: 0;
+}
+
+#task-status-filter {
+    dock: top;
+    width: 100%;
+    height: 3;
+    margin: 0;
+    padding: 0 1;
+}
+
+#task-status-filter > SelectCurrent {
+    width: 100%;
+}
+
+.task-search-input {
+    dock: top;
+    width: 100%;
+    height: 1;
+    background: $surface;
+    border: none;
+    padding: 0 1;
+}
+
+.task-search-input:focus {
+    border: none;
+}
+
+.task-search-input.-hidden {
+    display: none;
+}
+
+
+/* =============================================================================
+ * TASK DETAIL WIDGET
+ * Right pane showing comprehensive task information
+ * ============================================================================= */
+
+#task-detail {
+    width: 100%;
+    height: 100%;
+}
+
+TaskDetailWidget {
+    width: 100%;
+    height: 100%;
+    padding: 0 1;
+}
+
+.task-detail-title {
+    text-style: bold;
+    width: 100%;
+    padding: 0 0 1 0;
+    color: $text;
+}
+
+.task-detail-metadata {
+    color: $text;
+    padding: 0 0 1 0;
+}
+
+.task-detail-section-header {
+    text-style: bold;
+    color: $primary;
+    padding: 0;
+}
+
+.task-detail-section-divider {
+    color: $primary;
+}
+
+.task-detail-content {
+    padding: 0 0 0 0;
+    color: $text;
+}
+
+.task-detail-item {
+    padding: 0 0 0 1;
+    color: $text;
+}
+
+.task-detail-item-header {
+    color: $text-muted;
+    text-style: italic;
+}
+
+.copy-id-button {
+    min-width: 8;
+    width: auto;
+    height: 3;
+    margin: 0 1 0 0;
+}
+
+.id-row {
+    layout: horizontal;
+    height: auto;
+    width: 100%;
+    align: left middle;
+}
+
+.id-text {
+    color: $text-muted;
+    padding: 0 0 0 0;
+}
+
+
+/* =============================================================================
+ * ACCEPTANCE CRITERIA
+ * Checkable criteria with met/unmet states and selection
+ * ============================================================================= */
+
+.criteria-item {
+    padding: 0 0 0 1;
+}
+
+.criteria-met {
+    color: $success;
+}
+
+.criteria-unmet {
+    color: $text-muted;
+}
+
+.criteria-selected {
+    background: $primary-darken-2;
+}
+
+#criteria-progress {
+    color: $text-muted;
+    padding: 1 0 0 0;
+}
+
+
+/* =============================================================================
+ * DEPENDENCIES
+ * Upstream/downstream task dependencies with status indicators
+ * ============================================================================= */
+
+.dependency-done {
+    color: $success;
+}
+
+.dependency-pending {
+    color: $text-muted;
+}
+
+
+/* =============================================================================
+ * LOADING & EMPTY STATES
+ * Feedback for async operations and empty data
+ * ============================================================================= */
+
+.loading-container {
+    width: 100%;
+    height: 100%;
+    align: center middle;
+}
+
+.empty-message {
+    width: 100%;
+    height: 100%;
+    align: center middle;
+    text-align: center;
+    color: $text-muted;
+}
+
+
+/* =============================================================================
+ * SELECTION STATES
+ * Visual highlighting for selected/focused items
+ * ============================================================================= */
+
+.selected {
+    background: $accent;
+}
+
+.--highlight {
+    background: $accent;
+}
+
+
+/* =============================================================================
+ * DELETE MODAL
+ * Confirmation dialog for delete operations
+ * ============================================================================= */
+
+DeleteModal {
+    align: center middle;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+DeleteModal > Container {
+    width: 50;
+    height: auto;
+    min-height: 12;
+    background: $surface;
+    border: thick $error;
+    padding: 1 2;
+}
+
+.modal-title {
+    text-style: bold;
+    color: $warning;
+    text-align: center;
+    width: 100%;
+    padding: 0 0 1 0;
+}
+
+.modal-prompt {
+    text-align: center;
+    width: 100%;
+    padding: 0 0 1 0;
+    color: $text;
+}
+
+.modal-item-name {
+    text-style: bold italic;
+    text-align: center;
+    width: 100%;
+    color: $text;
+    padding: 0 0 1 0;
+}
+
+.modal-warning-section {
+    width: 100%;
+    padding: 0 0 1 0;
+}
+
+.modal-warning-header {
+    color: $text-muted;
+    width: 100%;
+}
+
+.modal-warning-item {
+    color: $text-muted;
+    padding: 0 0 0 2;
+}
+
+.modal-undone-warning {
+    text-style: italic;
+    color: $error;
+    text-align: center;
+    width: 100%;
+    padding: 1 0;
+}
+
+.modal-buttons {
+    width: 100%;
+    height: auto;
+    align: center middle;
+    padding: 1 0 0 0;
+}
+
+.modal-buttons Button {
+    margin: 0 1;
+}
+
+#confirm-button {
+    background: $error;
+}
+
+#cancel-button {
+    background: $surface-darken-1;
+}
+
+
+/* =============================================================================
+ * PRIORITY STYLING
+ * Visual emphasis for different priority levels
+ * ============================================================================= */
+
+.priority-high {
+    color: $error;
+}
+
+.priority-medium {
+    color: $warning;
+}
+
+.priority-low {
+    color: $success;
+}
+
+
+/* =============================================================================
+ * SCROLLBAR STYLING
+ * Consistent scrollbar appearance across widgets
+ * ============================================================================= */
+
+VerticalScroll > ScrollBar {
+    background: $surface;
+}
+
+VerticalScroll > ScrollBar > .scrollbar--bar {
+    background: $primary-darken-1;
+}
+
+VerticalScroll > ScrollBar > .scrollbar--bar:hover {
+    background: $primary;
+}
+
+
+/* =============================================================================
+ * BUTTON STYLING
+ * Consistent button appearance
+ * ============================================================================= */
+
+Button {
+    margin: 0 1;
+}
+
+Button:focus {
+    text-style: bold;
+}
+
+Button.-primary {
+    background: $primary;
+}
+
+Button.-success {
+    background: $success;
+}
+
+Button.-warning {
+    background: $warning;
+}
+
+Button.-error {
+    background: $error;
+}
+
+
+/* =============================================================================
+ * INPUT STYLING
+ * Text input fields
+ * ============================================================================= */
+
+Input {
+    background: $surface;
+    border: solid $primary;
+    padding: 0 1;
+    height: 3;
+}
+
+Input:focus {
+    border: solid $accent;
+}
+
+Input.-invalid {
+    border: solid $error;
+}
+
+
+/* =============================================================================
+ * SELECT DROPDOWN STYLING
+ * Dropdown/select widgets
+ * ============================================================================= */
+
+Select {
+    background: $surface;
+}
+
+Select:focus {
+    border: solid $accent;
+}
+
+SelectCurrent {
+    background: $surface;
+}
+
+SelectOverlay {
+    background: $surface;
+    border: solid $primary;
+}
+
+SelectOverlay > OptionList > Option {
+    padding: 0 1;
+}
+
+SelectOverlay > OptionList > Option:hover {
+    background: $accent;
+}
+
+
+/* =============================================================================
+ * HEADER & FOOTER
+ * Application header and footer bars
+ * ============================================================================= */
+
+Header {
+    background: $primary;
+    color: $text;
+}
+
+Footer {
+    background: $surface;
+}
+
+Footer > FooterKey {
+    background: $primary-darken-1;
+    color: $text;
+}
+
+Footer > FooterKey:hover {
+    background: $primary;
+}
+
+
+/* =============================================================================
+ * NOTIFICATION TOASTS
+ * Toast messages for feedback
+ * ============================================================================= */
+
+Toast {
+    background: $surface;
+    border: solid $primary;
+    padding: 1 2;
+}
+
+Toast.-information {
+    border: solid $primary;
+}
+
+Toast.-warning {
+    border: solid $warning;
+}
+
+Toast.-error {
+    border: solid $error;
+}
+
+
+/* =============================================================================
+ * RESPONSIVE LAYOUT
+ * Size warning and collapsed states for small terminals
+ * ============================================================================= */
+
+#size-warning {
+    width: 100%;
+    height: auto;
+    background: $warning;
+    color: $text;
+    text-align: center;
+    padding: 0 1;
+    display: none;
+}
+
+#size-warning.visible {
+    display: block;
+}
+
+#detail-pane.collapsed {
+    display: none;
+}
+
+
+/* =============================================================================
+ * BULK ACTIONS MODAL
+ * Modal for selecting bulk operations on multiple tasks
+ * ============================================================================= */
+
+BulkActionsModal {
+    align: center middle;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+BulkActionsModal > Container {
+    width: 60;
+    height: auto;
+    min-height: 20;
+    max-height: 35;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
+
+#bulk-actions-modal-container {
+    width: 100%;
+    height: auto;
+}
+
+#bulk-actions-modal-title {
+    text-style: bold;
+    color: $primary;
+    text-align: center;
+    width: 100%;
+    padding: 0 0 1 0;
+}
+
+#bulk-actions-preview {
+    width: 100%;
+    height: auto;
+    max-height: 10;
+    overflow-y: auto;
+    padding: 0 0 1 0;
+    border: solid $panel;
+}
+
+.preview-header {
+    text-style: bold;
+    color: $text-muted;
+    width: 100%;
+    padding: 0 0 0 0;
+}
+
+.preview-task-item {
+    color: $text;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.preview-more {
+    color: $text-muted;
+    text-style: italic;
+    width: 100%;
+}
+
+#bulk-actions-section {
+    width: 100%;
+    height: auto;
+    padding: 1 0;
+}
+
+.action-header {
+    text-style: bold;
+    color: $text;
+    width: 100%;
+    padding: 0 0 1 0;
+}
+
+.action-button {
+    width: 100%;
+    margin: 0 0 1 0;
+}
+
+.action-row {
+    width: 100%;
+    height: auto;
+    align: left middle;
+    margin: 0 0 1 0;
+}
+
+.action-label {
+    width: auto;
+    padding: 0 1 0 0;
+    color: $text;
+}
+
+.action-select {
+    width: 1fr;
+}
+
+#bulk-actions-modal-buttons {
+    width: 100%;
+    height: auto;
+    align: center middle;
+    padding: 1 0 0 0;
+}
+
+#bulk-actions-modal-buttons Button {
+    margin: 0 1;
+}
+
+
+/* =============================================================================
+ * BULK DELETE MODAL
+ * Confirmation dialog for bulk delete operations
+ * ============================================================================= */
+
+BulkDeleteModal {
+    align: center middle;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+BulkDeleteModal > Container {
+    width: 55;
+    height: auto;
+    min-height: 15;
+    max-height: 30;
+    background: $surface;
+    border: thick $error;
+    padding: 1 2;
+}
+
+
+/* =============================================================================
+ * TASK DATA TABLE WIDGET
+ * DataTable-based task list for efficient virtualized rendering
+ * ============================================================================= */
+
+DataTable {
+    background: $background;
+    color: $text;
+    border: none;
+}
+
+DataTable > .datatable--header {
+    background: $primary;
+    color: $text;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: $accent;
+    color: $text;
+    text-style: bold;
+}
+
+DataTable > .datatable--hover {
+    background: $primary-darken-2;
+}
+
+DataTable > .datatable--even-row {
+    background: $background;
+}
+
+DataTable > .datatable--odd-row {
+    background: $surface;
+}
+
+DataTable > .datatable--selected {
+    background: $primary-darken-1;
+    color: $text;
+}
+
+DataTable > VerticalScroll > ScrollBar {
+    background: $surface;
+}
+
+DataTable > VerticalScroll > ScrollBar > .scrollbar--bar {
+    background: $primary-darken-1;
+}
+
+DataTable > VerticalScroll > ScrollBar > .scrollbar--bar:hover {
+    background: $primary;
+}

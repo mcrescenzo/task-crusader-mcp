@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/ssd/Documents/projects/task-crusader-mcp"
+      ]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"]
+    },
+    "tmux": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "tmux-mcp"
+      ]
+    },
+    "crusader": {
+      "command": "crusader-mcp",
+      "args": []
+    }
+  }
+}
