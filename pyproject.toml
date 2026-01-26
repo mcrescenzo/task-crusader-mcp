@@ -3,7 +3,7 @@ requires = ["setuptools>=78.1.1", "wheel", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "task-crusade-mcp"
+name = "task-crusader-mcp"
 dynamic = ["version"]
 description = "Your AI coding assistant's quest companion - campaign and task management via MCP"
 readme = "README.md"
