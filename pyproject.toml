@@ -13,7 +13,7 @@ authors = [
     {name = "Task Crusade Contributors", email = "contributors@task-crusade.dev"}
 ]
 maintainers = [
-    {name = "Michael Crescenzo", email = "michael@crescenzo.dev"}
+    {name = "Michael Crescenzo", email = "michaelcrescenzo@gmail.com"}
 ]
 keywords = ["mcp", "task-management", "campaign", "ai-assistant", "claude", "cursor", "crusader"]
 classifiers = [
