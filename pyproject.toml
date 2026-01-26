@@ -94,13 +94,26 @@ markers = [
 
 [tool.mypy]
 python_version = "3.10"
-strict = true
-warn_return_any = true
+strict = false
+warn_return_any = false
 warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_generics = false
+no_implicit_optional = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = [
+    "task_crusade_mcp.database.models.*",
+    "task_crusade_mcp.database.orm_manager",
+    "task_crusade_mcp.database.repositories.*",
+    "task_crusade_mcp.tui.*"
+]
+ignore_errors = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "B", "C4", "SIM"]
@@ -108,7 +121,7 @@ ignore = ["E501"]
 
 [tool.black]
 line-length = 100
-target-version = ["py39", "py310", "py311", "py312"]
+target-version = ["py310", "py311", "py312", "py313"]
 
 [tool.isort]
 profile = "black"

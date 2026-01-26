@@ -15,6 +15,7 @@ from task_crusade_mcp.database.repositories import (
     TaskRepository,
 )
 from task_crusade_mcp.domain.entities.result_types import (
+    DomainError,
     DomainResult,
     DomainSuccess,
 )
