@@ -179,11 +179,18 @@ Key design decisions:
 
 ## Contributing
 
-Contributions are welcome! Please ensure:
+Contributions are welcome! Before pushing, run the CI checks locally:
 
-1. Tests pass with 65% coverage on core functionality: `pytest`
-2. Code is formatted: `black src/` and `isort src/`
-3. Type hints are complete: `mypy src/`
+```bash
+./scripts/check_ci.sh
+```
+
+This runs:
+1. Linting with `ruff check src/ tests/`
+2. Tests with coverage: `pytest --cov --cov-fail-under=65`
+3. Optional type checking: `mypy src/`
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ## License
 
