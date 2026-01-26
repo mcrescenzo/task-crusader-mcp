@@ -154,3 +154,6 @@ Thumbs.db
 # Project specific
 *.db
 .crusader/
+
+# setuptools-scm generated version file
+src/task_crusade_mcp/_version.py
