@@ -29,7 +29,9 @@ class ServiceExecutor:
     def __init__(self):
         """Initialize the service executor."""
         self._factory = get_service_factory()
-        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="mcp-service-")
+        self._executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="mcp-service-"
+        )
 
         # Tool to service method mapping
         self._tool_handlers: Dict[str, callable] = {}
@@ -52,6 +54,16 @@ class ServiceExecutor:
                 "campaign_research_add": self._handle_campaign_research_add,
                 "campaign_research_list": self._handle_campaign_research_list,
                 "campaign_workflow_guide": self._handle_workflow_guide,
+                "campaign_create_with_tasks": self._handle_campaign_create_with_tasks,
+                # Phase 1 new tools
+                "campaign_overview": self._handle_campaign_overview,
+                "campaign_get_state_snapshot": self._handle_campaign_state_snapshot,
+                "campaign_validate_readiness": self._handle_campaign_validate_readiness,
+                "campaign_research_show": self._handle_campaign_research_show,
+                "campaign_research_update": self._handle_campaign_research_update,
+                "campaign_research_delete": self._handle_campaign_research_delete,
+                "campaign_research_reorder": self._handle_campaign_research_reorder,
+                "campaign_renumber_tasks": self._handle_campaign_renumber_tasks,
             }
         )
 
@@ -70,6 +82,42 @@ class ServiceExecutor:
                 "task_research_add": self._handle_add_research,
                 "task_implementation_notes_add": self._handle_add_notes,
                 "task_testing_step_add": self._handle_add_testing_step,
+                # Phase 2: Search & Analytics tools
+                "task_search": self._handle_task_search,
+                "task_stats": self._handle_task_stats,
+                "task_get_dependency_info": self._handle_task_dependency_info,
+                # Phase 3: Bulk & Workflow tools
+                "task_bulk_update": self._handle_task_bulk_update,
+                "task_create_from_template": self._handle_task_from_template,
+                "task_complete_with_workflow": self._handle_task_complete_workflow,
+                # Phase 4: Task Research CRUD
+                "task_research_list": self._handle_task_research_list,
+                "task_research_show": self._handle_task_research_show,
+                "task_research_update": self._handle_task_research_update,
+                "task_research_delete": self._handle_task_research_delete,
+                "task_research_reorder": self._handle_task_research_reorder,
+                # Phase 5: Task Notes CRUD
+                "task_implementation_notes_list": self._handle_notes_list,
+                "task_implementation_notes_show": self._handle_notes_show,
+                "task_implementation_notes_update": self._handle_notes_update,
+                "task_implementation_notes_delete": self._handle_notes_delete,
+                "task_implementation_notes_reorder": self._handle_notes_reorder,
+                # Phase 6: Task Criteria CRUD
+                "task_acceptance_criteria_list": self._handle_criteria_list,
+                "task_acceptance_criteria_show": self._handle_criteria_show,
+                "task_acceptance_criteria_update": self._handle_criteria_update,
+                "task_acceptance_criteria_delete": self._handle_criteria_delete,
+                "task_acceptance_criteria_reorder": self._handle_criteria_reorder,
+                # Phase 7: Task Testing Strategy CRUD
+                "task_testing_strategy_add": self._handle_add_testing_step,
+                "task_testing_strategy_list": self._handle_testing_list,
+                "task_testing_strategy_show": self._handle_testing_show,
+                "task_testing_strategy_update": self._handle_testing_update,
+                "task_testing_strategy_delete": self._handle_testing_delete,
+                "task_testing_strategy_mark_passed": self._handle_testing_passed,
+                "task_testing_strategy_mark_failed": self._handle_testing_failed,
+                "task_testing_strategy_mark_skipped": self._handle_testing_skipped,
+                "task_testing_strategy_reorder": self._handle_testing_reorder,
             }
         )
 
@@ -91,7 +139,9 @@ class ServiceExecutor:
         try:
             # Run handler in thread pool to avoid blocking event loop
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(self._executor, lambda: handler(arguments))
+            result = await loop.run_in_executor(
+                self._executor, lambda: handler(arguments)
+            )
             return result
         except Exception as e:
             logger.error("Error executing tool %s: %s", tool_name, e, exc_info=True)
@@ -201,7 +251,9 @@ class ServiceExecutor:
 
         if result.is_success:
             return self._format_result(result.data)
-        return self._format_error(result.error_message or "Failed to get next task")
+        return self._format_error(
+            result.error_message or "Failed to get next task"
+        )
 
     def _handle_all_actionable_tasks(self, args: Dict[str, Any]) -> str:
         """Handle campaign_get_all_actionable_tasks tool."""
@@ -214,7 +266,9 @@ class ServiceExecutor:
 
         if result.is_success:
             return self._format_result(result.data)
-        return self._format_error(result.error_message or "Failed to get actionable tasks")
+        return self._format_error(
+            result.error_message or "Failed to get actionable tasks"
+        )
 
     def _handle_campaign_details(self, args: Dict[str, Any]) -> str:
         """Handle campaign_details tool."""
@@ -258,17 +312,21 @@ class ServiceExecutor:
                 {
                     "phase": "1. Planning",
                     "description": "Define campaign and tasks with dependencies",
-                    "tools": ["campaign_create", "task_create", "task_acceptance_criteria_add"],
+                    "tools": [
+                        "campaign_create",
+                        "task_create",
+                        "task_acceptance_criteria_add",
+                    ],
                 },
                 {
                     "phase": "2. Execution",
                     "description": "Work through tasks sequentially",
                     "pattern": [
-                        "campaign_get_next_actionable_task(campaign_id) -> get next task",
-                        "task_update(task_id, status='in-progress') -> claim task",
+                        "campaign_get_next_actionable_task(campaign_id)",
+                        "task_update(task_id, status='in-progress')",
                         "[Implement the task]",
-                        "task_acceptance_criteria_mark_met(criteria_id) -> mark criteria met",
-                        "task_complete(task_id) -> complete task",
+                        "task_acceptance_criteria_mark_met(criteria_id)",
+                        "task_complete(task_id)",
                         "Repeat until campaign complete",
                     ],
                 },
@@ -285,6 +343,140 @@ class ServiceExecutor:
             ],
         }
         return self._format_result(guide)
+
+    def _handle_campaign_create_with_tasks(self, args: Dict[str, Any]) -> str:
+        """Handle campaign_create_with_tasks tool."""
+        from task_crusade_mcp.domain.entities.campaign_spec import CampaignSpec
+
+        service = self._factory.get_campaign_service()
+
+        # Parse JSON input
+        campaign_json = args.get("campaign_json", "")
+
+        # Handle double-encoding (AI agents sometimes stringify twice)
+        if isinstance(campaign_json, str):
+            try:
+                spec_data = json.loads(campaign_json)
+                # Check if it's still a string (double-encoded)
+                if isinstance(spec_data, str):
+                    spec_data = json.loads(spec_data)
+            except json.JSONDecodeError as e:
+                return self._format_error(f"Invalid JSON: {e}")
+        elif isinstance(campaign_json, dict):
+            spec_data = campaign_json
+        else:
+            return self._format_error(
+                "campaign_json must be a JSON string or object"
+            )
+
+        # Build CampaignSpec from parsed data
+        try:
+            campaign_spec = CampaignSpec.from_dict(spec_data)
+        except (KeyError, TypeError, ValueError) as e:
+            return self._format_error(f"Invalid campaign spec: {e}")
+
+        # Validate required fields
+        if not campaign_spec.name:
+            return self._format_error("Campaign name is required")
+
+        result = service.create_campaign_with_tasks(campaign_spec)
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(
+            result.error_message or "Failed to create campaign with tasks",
+            getattr(result, "suggestions", None),
+        )
+
+    def _handle_campaign_overview(self, args: Dict[str, Any]) -> str:
+        """Handle campaign_overview tool."""
+        service = self._factory.get_campaign_service()
+        result = service.get_campaign_overview(campaign_id=args.get("campaign_id", ""))
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to get overview")
+
+    def _handle_campaign_state_snapshot(self, args: Dict[str, Any]) -> str:
+        """Handle campaign_get_state_snapshot tool."""
+        service = self._factory.get_campaign_service()
+        result = service.get_state_snapshot(campaign_id=args.get("campaign_id", ""))
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to get snapshot")
+
+    def _handle_campaign_validate_readiness(self, args: Dict[str, Any]) -> str:
+        """Handle campaign_validate_readiness tool."""
+        service = self._factory.get_campaign_service()
+        result = service.validate_readiness(campaign_id=args.get("campaign_id", ""))
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to validate")
+
+    def _handle_campaign_research_show(self, args: Dict[str, Any]) -> str:
+        """Handle campaign_research_show tool."""
+        service = self._factory.get_campaign_service()
+        result = service.get_campaign_research(
+            campaign_id=args.get("campaign_id", ""),
+            research_id=args.get("research_id", ""),
+        )
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Research not found")
+
+    def _handle_campaign_research_update(self, args: Dict[str, Any]) -> str:
+        """Handle campaign_research_update tool."""
+        service = self._factory.get_campaign_service()
+        result = service.update_campaign_research(
+            campaign_id=args.get("campaign_id", ""),
+            research_id=args.get("research_id", ""),
+            content=args.get("content"),
+            research_type=args.get("research_type"),
+        )
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to update research")
+
+    def _handle_campaign_research_delete(self, args: Dict[str, Any]) -> str:
+        """Handle campaign_research_delete tool."""
+        service = self._factory.get_campaign_service()
+        result = service.delete_campaign_research(
+            campaign_id=args.get("campaign_id", ""),
+            research_id=args.get("research_id", ""),
+        )
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to delete research")
+
+    def _handle_campaign_research_reorder(self, args: Dict[str, Any]) -> str:
+        """Handle campaign_research_reorder tool."""
+        service = self._factory.get_campaign_service()
+        result = service.reorder_campaign_research(
+            campaign_id=args.get("campaign_id", ""),
+            research_id=args.get("research_id", ""),
+            new_order=args.get("new_order", 0),
+        )
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to reorder research")
+
+    def _handle_campaign_renumber_tasks(self, args: Dict[str, Any]) -> str:
+        """Handle campaign_renumber_tasks tool."""
+        service = self._factory.get_campaign_service()
+        result = service.renumber_tasks(
+            campaign_id=args.get("campaign_id", ""),
+            start_from=args.get("start_from", 1),
+        )
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to renumber tasks")
 
     # --- Task Handlers ---
 
@@ -450,7 +642,355 @@ class ServiceExecutor:
 
         if result.is_success:
             return self._format_result(result.data)
-        return self._format_error(result.error_message or "Failed to add testing step")
+        return self._format_error(
+            result.error_message or "Failed to add testing step"
+        )
+
+    def _handle_task_search(self, args: Dict[str, Any]) -> str:
+        """Handle task_search tool."""
+        service = self._factory.get_task_service()
+        result = service.search_tasks(
+            query=args.get("query", ""),
+            campaign_id=args.get("campaign_id"),
+            status=args.get("status"),
+            priority=args.get("priority"),
+            limit=args.get("limit", 50),
+        )
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Search failed")
+
+    def _handle_task_stats(self, args: Dict[str, Any]) -> str:
+        """Handle task_stats tool."""
+        service = self._factory.get_task_service()
+        result = service.get_task_stats(campaign_id=args.get("campaign_id"))
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to get stats")
+
+    def _handle_task_dependency_info(self, args: Dict[str, Any]) -> str:
+        """Handle task_get_dependency_info tool."""
+        service = self._factory.get_task_service()
+        result = service.get_dependency_info(task_id=args.get("task_id", ""))
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(
+            result.error_message or "Failed to get dependency info"
+        )
+
+    def _handle_task_bulk_update(self, args: Dict[str, Any]) -> str:
+        """Handle task_bulk_update tool."""
+        service = self._factory.get_task_service()
+        result = service.bulk_update_tasks(
+            task_ids=args.get("task_ids", []),
+            status=args.get("status"),
+            priority=args.get("priority"),
+        )
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Bulk update failed")
+
+    def _handle_task_from_template(self, args: Dict[str, Any]) -> str:
+        """Handle task_create_from_template tool."""
+        service = self._factory.get_task_service()
+
+        # Parse overrides if provided as JSON string
+        overrides = args.get("overrides")
+        if isinstance(overrides, str):
+            try:
+                overrides = json.loads(overrides)
+            except json.JSONDecodeError:
+                overrides = None
+
+        result = service.create_task_from_template(
+            template_name=args.get("template_name", ""),
+            campaign_id=args.get("campaign_id", ""),
+            title=args.get("title"),
+            overrides=overrides,
+        )
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(
+            result.error_message or "Failed to create from template"
+        )
+
+    def _handle_task_complete_workflow(self, args: Dict[str, Any]) -> str:
+        """Handle task_complete_with_workflow tool."""
+        service = self._factory.get_task_service()
+        result = service.complete_task_with_workflow(
+            task_id=args.get("task_id", "")
+        )
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(
+            result.error_message or "Failed to complete task",
+            result.suggestions,
+        )
+
+    # --- Phase 4: Task Research CRUD Handlers ---
+
+    def _handle_task_research_list(self, args: Dict[str, Any]) -> str:
+        """Handle task_research_list tool."""
+        service = self._factory.get_task_service()
+        result = service.list_task_research(task_id=args.get("task_id", ""))
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to list")
+
+    def _handle_task_research_show(self, args: Dict[str, Any]) -> str:
+        """Handle task_research_show tool."""
+        service = self._factory.get_task_service()
+        result = service.get_task_research(
+            task_id=args.get("task_id", ""),
+            research_id=args.get("research_id", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Not found")
+
+    def _handle_task_research_update(self, args: Dict[str, Any]) -> str:
+        """Handle task_research_update tool."""
+        service = self._factory.get_task_service()
+        result = service.update_task_research(
+            task_id=args.get("task_id", ""),
+            research_id=args.get("research_id", ""),
+            content=args.get("content"),
+            research_type=args.get("research_type"),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Update failed")
+
+    def _handle_task_research_delete(self, args: Dict[str, Any]) -> str:
+        """Handle task_research_delete tool."""
+        service = self._factory.get_task_service()
+        result = service.delete_task_research(
+            task_id=args.get("task_id", ""),
+            research_id=args.get("research_id", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Delete failed")
+
+    def _handle_task_research_reorder(self, args: Dict[str, Any]) -> str:
+        """Handle task_research_reorder tool."""
+        service = self._factory.get_task_service()
+        result = service.reorder_task_research(
+            task_id=args.get("task_id", ""),
+            research_id=args.get("research_id", ""),
+            new_order=args.get("new_order", 0),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Reorder failed")
+
+    # --- Phase 5: Task Notes CRUD Handlers ---
+
+    def _handle_notes_list(self, args: Dict[str, Any]) -> str:
+        """Handle task_implementation_notes_list tool."""
+        service = self._factory.get_task_service()
+        result = service.list_implementation_notes(task_id=args.get("task_id", ""))
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to list")
+
+    def _handle_notes_show(self, args: Dict[str, Any]) -> str:
+        """Handle task_implementation_notes_show tool."""
+        service = self._factory.get_task_service()
+        result = service.get_implementation_note(
+            task_id=args.get("task_id", ""),
+            note_id=args.get("note_id", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Not found")
+
+    def _handle_notes_update(self, args: Dict[str, Any]) -> str:
+        """Handle task_implementation_notes_update tool."""
+        service = self._factory.get_task_service()
+        result = service.update_implementation_note(
+            task_id=args.get("task_id", ""),
+            note_id=args.get("note_id", ""),
+            content=args.get("content", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Update failed")
+
+    def _handle_notes_delete(self, args: Dict[str, Any]) -> str:
+        """Handle task_implementation_notes_delete tool."""
+        service = self._factory.get_task_service()
+        result = service.delete_implementation_note(
+            task_id=args.get("task_id", ""),
+            note_id=args.get("note_id", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Delete failed")
+
+    def _handle_notes_reorder(self, args: Dict[str, Any]) -> str:
+        """Handle task_implementation_notes_reorder tool."""
+        service = self._factory.get_task_service()
+        result = service.reorder_implementation_notes(
+            task_id=args.get("task_id", ""),
+            note_id=args.get("note_id", ""),
+            new_order=args.get("new_order", 0),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Reorder failed")
+
+    # --- Phase 6: Task Criteria CRUD Handlers ---
+
+    def _handle_criteria_list(self, args: Dict[str, Any]) -> str:
+        """Handle task_acceptance_criteria_list tool."""
+        service = self._factory.get_task_service()
+        result = service.list_acceptance_criteria(task_id=args.get("task_id", ""))
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to list")
+
+    def _handle_criteria_show(self, args: Dict[str, Any]) -> str:
+        """Handle task_acceptance_criteria_show tool."""
+        service = self._factory.get_task_service()
+        result = service.get_acceptance_criterion(
+            task_id=args.get("task_id", ""),
+            criterion_id=args.get("criterion_id", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Not found")
+
+    def _handle_criteria_update(self, args: Dict[str, Any]) -> str:
+        """Handle task_acceptance_criteria_update tool."""
+        service = self._factory.get_task_service()
+        result = service.update_acceptance_criterion(
+            task_id=args.get("task_id", ""),
+            criterion_id=args.get("criterion_id", ""),
+            content=args.get("content", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Update failed")
+
+    def _handle_criteria_delete(self, args: Dict[str, Any]) -> str:
+        """Handle task_acceptance_criteria_delete tool."""
+        service = self._factory.get_task_service()
+        result = service.delete_acceptance_criterion(
+            task_id=args.get("task_id", ""),
+            criterion_id=args.get("criterion_id", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Delete failed")
+
+    def _handle_criteria_reorder(self, args: Dict[str, Any]) -> str:
+        """Handle task_acceptance_criteria_reorder tool."""
+        service = self._factory.get_task_service()
+        result = service.reorder_acceptance_criteria(
+            task_id=args.get("task_id", ""),
+            criterion_id=args.get("criterion_id", ""),
+            new_order=args.get("new_order", 0),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Reorder failed")
+
+    # --- Phase 7: Task Testing Strategy CRUD Handlers ---
+
+    def _handle_testing_list(self, args: Dict[str, Any]) -> str:
+        """Handle task_testing_strategy_list tool."""
+        service = self._factory.get_task_service()
+        result = service.list_testing_steps(task_id=args.get("task_id", ""))
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed to list")
+
+    def _handle_testing_show(self, args: Dict[str, Any]) -> str:
+        """Handle task_testing_strategy_show tool."""
+        service = self._factory.get_task_service()
+        result = service.get_testing_step(
+            task_id=args.get("task_id", ""),
+            step_id=args.get("step_id", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Not found")
+
+    def _handle_testing_update(self, args: Dict[str, Any]) -> str:
+        """Handle task_testing_strategy_update tool."""
+        service = self._factory.get_task_service()
+        result = service.update_testing_step(
+            task_id=args.get("task_id", ""),
+            step_id=args.get("step_id", ""),
+            content=args.get("content"),
+            step_type=args.get("step_type"),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Update failed")
+
+    def _handle_testing_delete(self, args: Dict[str, Any]) -> str:
+        """Handle task_testing_strategy_delete tool."""
+        service = self._factory.get_task_service()
+        result = service.delete_testing_step(
+            task_id=args.get("task_id", ""),
+            step_id=args.get("step_id", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Delete failed")
+
+    def _handle_testing_passed(self, args: Dict[str, Any]) -> str:
+        """Handle task_testing_strategy_mark_passed tool."""
+        service = self._factory.get_task_service()
+        result = service.mark_testing_step_passed(
+            task_id=args.get("task_id", ""),
+            step_id=args.get("step_id", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed")
+
+    def _handle_testing_failed(self, args: Dict[str, Any]) -> str:
+        """Handle task_testing_strategy_mark_failed tool."""
+        service = self._factory.get_task_service()
+        result = service.mark_testing_step_failed(
+            task_id=args.get("task_id", ""),
+            step_id=args.get("step_id", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed")
+
+    def _handle_testing_skipped(self, args: Dict[str, Any]) -> str:
+        """Handle task_testing_strategy_mark_skipped tool."""
+        service = self._factory.get_task_service()
+        result = service.mark_testing_step_skipped(
+            task_id=args.get("task_id", ""),
+            step_id=args.get("step_id", ""),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Failed")
+
+    def _handle_testing_reorder(self, args: Dict[str, Any]) -> str:
+        """Handle task_testing_strategy_reorder tool."""
+        service = self._factory.get_task_service()
+        result = service.reorder_testing_steps(
+            task_id=args.get("task_id", ""),
+            step_id=args.get("step_id", ""),
+            new_order=args.get("new_order", 0),
+        )
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Reorder failed")
 
     def close(self) -> None:
         """Shutdown the executor."""

@@ -525,3 +525,285 @@ class TestHintGenerator:
 
         assert "hints" in result
         assert "next_action" not in result
+
+    # --- Task Memory Operations Hint Tests ---
+
+    def test_post_acceptance_criteria_add(self, generator):
+        """Test hints after adding acceptance criteria."""
+        result = generator.post_acceptance_criteria_add(
+            task_id="task-456",
+            task_title="My Task",
+            criteria_count=3,
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.WORKFLOW
+        assert "3 total" in hint.message
+        assert "My Task" in hint.message
+        assert "task_update(task_id='task-456', status='in-progress')" in hint.tool_call
+
+    def test_post_research_add(self, generator):
+        """Test hints after adding research - no tool call expected."""
+        result = generator.post_research_add(
+            task_id="task-456",
+            task_title="My Task",
+            research_type="findings",
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.PROGRESS
+        assert "My Task" in hint.message
+        assert "Continue implementing" in hint.message
+        # No tool call - agent should continue work
+        assert hint.tool_call is None
+
+    def test_post_implementation_note_add_with_unmet_criteria(self, generator):
+        """Test hints after adding note with unmet criteria."""
+        result = generator.post_implementation_note_add(
+            task_id="task-456",
+            task_title="My Task",
+            unmet_criteria=[
+                {"id": "crit-1", "content": "First criterion"},
+                {"id": "crit-2", "content": "Second criterion"},
+            ],
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.WORKFLOW
+        assert "My Task" in hint.message
+        assert "Mark criteria" in hint.message
+        assert "task_acceptance_criteria_mark_met(criteria_id='crit-1')" in hint.tool_call
+        assert hint.context["unmet_count"] == 2
+
+    def test_post_implementation_note_add_no_unmet_criteria(self, generator):
+        """Test hints after adding note with no unmet criteria."""
+        result = generator.post_implementation_note_add(
+            task_id="task-456",
+            task_title="My Task",
+            unmet_criteria=[],
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.WORKFLOW
+        assert "My Task" in hint.message
+        assert "Continue implementing" in hint.message
+        # No tool call when no unmet criteria
+        assert hint.tool_call is None
+
+    def test_post_testing_step_add(self, generator):
+        """Test hints after adding a testing step."""
+        result = generator.post_testing_step_add(
+            task_id="task-456",
+            task_title="My Task",
+            step_type="verify",
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.WORKFLOW
+        assert "My Task" in hint.message
+        assert "Run tests" in hint.message
+        # No tool call - agent should run tests
+        assert hint.tool_call is None
+        assert hint.context["step_type"] == "verify"
+
+    # --- Campaign Research Hint Tests ---
+
+    def test_post_campaign_research_add_no_tasks(self, generator):
+        """Test hints after campaign research when no tasks exist."""
+        result = generator.post_campaign_research_add(
+            campaign_id="camp-123",
+            campaign_name="My Campaign",
+            research_type="analysis",
+            task_count=0,
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.WORKFLOW
+        assert "research added" in hint.message.lower()
+        assert "task_create(campaign_id='camp-123'" in hint.tool_call
+
+    def test_post_campaign_research_add_has_tasks(self, generator):
+        """Test hints after campaign research when tasks exist."""
+        result = generator.post_campaign_research_add(
+            campaign_id="camp-123",
+            campaign_name="My Campaign",
+            research_type="strategy",
+            task_count=5,
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.PROGRESS
+        assert "research added" in hint.message.lower()
+        # No task_create suggested when tasks already exist
+        assert hint.tool_call is None
+
+    # --- Status Change with Blocking Info Tests ---
+
+    def test_post_task_status_change_blocked_with_dependencies(self, generator):
+        """Test hints when task becomes blocked with dependency info."""
+        result = generator.post_task_status_change(
+            task_id="task-456",
+            task_title="My Task",
+            campaign_id="camp-123",
+            old_status="pending",
+            new_status="blocked",
+            criteria_count=0,
+            unmet_criteria_count=0,
+            blocking_tasks=[
+                {"id": "task-100", "title": "First Blocker"},
+                {"id": "task-101", "title": "Second Blocker"},
+            ],
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.COORDINATION
+        assert "First Blocker" in hint.message
+        assert "Second Blocker" in hint.message
+        assert "task_show(task_id='task-100')" in hint.tool_call
+
+    def test_post_task_status_change_blocked_many_dependencies(self, generator):
+        """Test hints when task blocked by many dependencies (truncation)."""
+        result = generator.post_task_status_change(
+            task_id="task-456",
+            task_title="My Task",
+            campaign_id="camp-123",
+            old_status="pending",
+            new_status="blocked",
+            criteria_count=0,
+            unmet_criteria_count=0,
+            blocking_tasks=[
+                {"id": "task-100", "title": "Blocker 1"},
+                {"id": "task-101", "title": "Blocker 2"},
+                {"id": "task-102", "title": "Blocker 3"},
+                {"id": "task-103", "title": "Blocker 4"},
+                {"id": "task-104", "title": "Blocker 5"},
+            ],
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.COORDINATION
+        assert "Blocker 1" in hint.message
+        assert "Blocker 2" in hint.message
+        assert "Blocker 3" in hint.message
+        assert "(+2 more)" in hint.message
+
+    # --- Parallel Execution Hint Tests ---
+
+    def test_actionable_tasks_hints_multiple(self, generator):
+        """Test hints for multiple actionable tasks."""
+        result = generator.actionable_tasks_hints(
+            tasks=[
+                {"id": "task-1", "title": "Task One"},
+                {"id": "task-2", "title": "Task Two"},
+                {"id": "task-3", "title": "Task Three"},
+            ],
+            campaign_id="camp-123",
+            campaign_progress=None,
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.WORKFLOW
+        assert "3 actionable tasks" in hint.message
+        assert "in-progress" in hint.message.lower()
+        assert "task_update(task_id='task-1', status='in-progress')" in hint.tool_call
+        assert hint.context["actionable_count"] == 3
+
+    def test_actionable_tasks_hints_single(self, generator):
+        """Test hints for single actionable task (no plural 's')."""
+        result = generator.actionable_tasks_hints(
+            tasks=[{"id": "task-1", "title": "Task One"}],
+            campaign_id="camp-123",
+            campaign_progress=None,
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert "1 actionable task available" in hint.message
+        assert "tasks" not in hint.message  # Should be "task" not "tasks"
+
+    def test_actionable_tasks_hints_empty(self, generator):
+        """Test hints for empty actionable tasks delegates to no-actionable logic."""
+        result = generator.actionable_tasks_hints(
+            tasks=[],
+            campaign_id="camp-123",
+            campaign_progress={
+                "tasks_by_status": {
+                    "pending": 0,
+                    "blocked": 2,
+                    "done": 3,
+                },
+            },
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        # Should use the no-actionable hint logic
+        assert hint.category == HintCategory.COORDINATION
+        assert "blocked" in hint.message.lower()
+
+    # --- Disabled Generator Tests for New Methods ---
+
+    def test_post_acceptance_criteria_add_disabled(self, disabled_generator):
+        """Test disabled generator returns empty for acceptance criteria add."""
+        result = disabled_generator.post_acceptance_criteria_add(
+            task_id="task-456",
+            task_title="My Task",
+            criteria_count=3,
+        )
+        assert result.is_empty()
+
+    def test_post_research_add_disabled(self, disabled_generator):
+        """Test disabled generator returns empty for research add."""
+        result = disabled_generator.post_research_add(
+            task_id="task-456",
+            task_title="My Task",
+            research_type="findings",
+        )
+        assert result.is_empty()
+
+    def test_post_implementation_note_add_disabled(self, disabled_generator):
+        """Test disabled generator returns empty for implementation note add."""
+        result = disabled_generator.post_implementation_note_add(
+            task_id="task-456",
+            task_title="My Task",
+            unmet_criteria=[{"id": "crit-1"}],
+        )
+        assert result.is_empty()
+
+    def test_post_testing_step_add_disabled(self, disabled_generator):
+        """Test disabled generator returns empty for testing step add."""
+        result = disabled_generator.post_testing_step_add(
+            task_id="task-456",
+            task_title="My Task",
+            step_type="verify",
+        )
+        assert result.is_empty()
+
+    def test_post_campaign_research_add_disabled(self, disabled_generator):
+        """Test disabled generator returns empty for campaign research add."""
+        result = disabled_generator.post_campaign_research_add(
+            campaign_id="camp-123",
+            campaign_name="My Campaign",
+            research_type="analysis",
+            task_count=0,
+        )
+        assert result.is_empty()
+
+    def test_actionable_tasks_hints_disabled(self, disabled_generator):
+        """Test disabled generator returns empty for actionable tasks hints."""
+        result = disabled_generator.actionable_tasks_hints(
+            tasks=[{"id": "task-1"}],
+            campaign_id="camp-123",
+            campaign_progress=None,
+        )
+        assert result.is_empty()

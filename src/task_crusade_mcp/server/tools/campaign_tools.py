@@ -311,4 +311,224 @@ Returns step-by-step guidance for planning, creation, and execution phases.""",
                 "properties": {},
             },
         ),
+        Tool(
+            name="campaign_create_with_tasks",
+            description="""Create campaign and all tasks in one atomic operation.
+
+Use this to set up a complete campaign with tasks, dependencies, acceptance
+criteria, and research items in a single call. All operations succeed or
+all fail (no partial state).
+
+Tasks can reference each other using temp_id for dependencies before UUIDs
+are assigned. Dependencies are validated for missing references and cycles.
+
+Parameters:
+- campaign_json (required): JSON string with campaign and tasks spec
+
+JSON Format:
+```json
+{
+  "campaign": {
+    "name": "Project Name",
+    "description": "...",
+    "priority": "low|medium|high"
+  },
+  "tasks": [
+    {
+      "temp_id": "task-1",
+      "title": "First Task",
+      "dependencies": [],
+      "acceptance_criteria": ["criterion 1"]
+    },
+    {
+      "temp_id": "task-2",
+      "title": "Second Task",
+      "dependencies": ["task-1"]
+    }
+  ]
+}
+```
+
+Returns: Campaign, tasks with temp_id mapping, and creation summary.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "campaign_json": {
+                        "type": "string",
+                        "description": "JSON spec with campaign and tasks",
+                    },
+                },
+                "required": ["campaign_json"],
+            },
+        ),
+        Tool(
+            name="campaign_overview",
+            description="""Get comprehensive campaign overview.
+
+Returns combined view of progress, recent activity, actionable tasks,
+and research items in a single call.
+
+Parameters:
+- campaign_id (required): Campaign ID
+
+Returns: Campaign details, progress summary, recent tasks, actionable tasks,
+and research items.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "campaign_id": {"type": "string", "description": "Campaign ID"},
+                },
+                "required": ["campaign_id"],
+            },
+        ),
+        Tool(
+            name="campaign_get_state_snapshot",
+            description="""Export full campaign state for backup or analysis.
+
+Returns complete campaign data including all tasks with their acceptance
+criteria, research items, and implementation notes.
+
+Parameters:
+- campaign_id (required): Campaign ID
+
+Returns: Complete campaign state with all associated data.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "campaign_id": {"type": "string", "description": "Campaign ID"},
+                },
+                "required": ["campaign_id"],
+            },
+        ),
+        Tool(
+            name="campaign_validate_readiness",
+            description="""Check if campaign is ready to start execution.
+
+Validates:
+- Campaign has tasks
+- No circular dependencies
+- All task dependencies reference existing tasks
+- At least one task is actionable
+
+Parameters:
+- campaign_id (required): Campaign ID
+
+Returns: Readiness status with any issues or warnings found.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "campaign_id": {"type": "string", "description": "Campaign ID"},
+                },
+                "required": ["campaign_id"],
+            },
+        ),
+        Tool(
+            name="campaign_research_show",
+            description="""Get a single campaign research item by ID.
+
+Parameters:
+- campaign_id (required): Campaign ID
+- research_id (required): Research item ID
+
+Returns: Research item details.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "campaign_id": {"type": "string", "description": "Campaign ID"},
+                    "research_id": {"type": "string", "description": "Research item ID"},
+                },
+                "required": ["campaign_id", "research_id"],
+            },
+        ),
+        Tool(
+            name="campaign_research_update",
+            description="""Update a campaign research item.
+
+Parameters:
+- campaign_id (required): Campaign ID
+- research_id (required): Research item ID
+- content (optional): New content
+- research_type (optional): New type ("strategy", "analysis", "requirements")
+
+Returns: Updated research item.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "campaign_id": {"type": "string", "description": "Campaign ID"},
+                    "research_id": {"type": "string", "description": "Research item ID"},
+                    "content": {"type": "string", "description": "New content"},
+                    "research_type": {
+                        "type": "string",
+                        "enum": ["strategy", "analysis", "requirements"],
+                        "description": "New research type",
+                    },
+                },
+                "required": ["campaign_id", "research_id"],
+            },
+        ),
+        Tool(
+            name="campaign_research_delete",
+            description="""Delete a campaign research item.
+
+Parameters:
+- campaign_id (required): Campaign ID
+- research_id (required): Research item ID
+
+Returns: Deletion confirmation.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "campaign_id": {"type": "string", "description": "Campaign ID"},
+                    "research_id": {"type": "string", "description": "Research item ID"},
+                },
+                "required": ["campaign_id", "research_id"],
+            },
+        ),
+        Tool(
+            name="campaign_research_reorder",
+            description="""Change the order of a campaign research item.
+
+Parameters:
+- campaign_id (required): Campaign ID
+- research_id (required): Research item ID
+- new_order (required): New order index (0-based)
+
+Returns: Updated research item with new order.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "campaign_id": {"type": "string", "description": "Campaign ID"},
+                    "research_id": {"type": "string", "description": "Research item ID"},
+                    "new_order": {
+                        "type": "integer",
+                        "description": "New order index (0-based)",
+                    },
+                },
+                "required": ["campaign_id", "research_id", "new_order"],
+            },
+        ),
+        Tool(
+            name="campaign_renumber_tasks",
+            description="""Renumber all tasks in a campaign sequentially.
+
+Tasks are numbered based on their dependency order (topological sort).
+
+Parameters:
+- campaign_id (required): Campaign ID
+- start_from (optional): Starting number (default: 1)
+
+Returns: Renumbering summary with task numbers.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "campaign_id": {"type": "string", "description": "Campaign ID"},
+                    "start_from": {
+                        "type": "integer",
+                        "description": "Starting number (default: 1)",
+                        "default": 1,
+                    },
+                },
+                "required": ["campaign_id"],
+            },
+        ),
     ]

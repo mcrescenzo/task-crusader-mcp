@@ -193,6 +193,7 @@ class HintGenerator:
         new_status: str,
         criteria_count: int = 0,
         unmet_criteria_count: int = 0,
+        blocking_tasks: Optional[List[Dict[str, Any]]] = None,
     ) -> HintCollection:
         """
         Generate hints after task status change.
@@ -205,6 +206,7 @@ class HintGenerator:
             new_status: New status
             criteria_count: Total acceptance criteria count
             unmet_criteria_count: Number of unmet criteria
+            blocking_tasks: Optional list of tasks blocking this one (for blocked status)
 
         Returns:
             HintCollection with status-specific guidance
@@ -238,14 +240,34 @@ class HintGenerator:
                     )
                 )
         elif new_status == "blocked":
-            hints.append(
-                Hint(
-                    category=HintCategory.COORDINATION,
-                    message=f"Task '{task_title}' is now blocked. Resolve dependencies to continue.",
-                    tool_call=f"task_show(task_id='{task_id}')",
-                    context={"task_id": task_id},
+            if blocking_tasks and len(blocking_tasks) > 0:
+                # Format blocking task info
+                blocking_titles = [t.get("title", "Unknown") for t in blocking_tasks[:3]]
+                titles_str = ", ".join(blocking_titles)
+                if len(blocking_tasks) > 3:
+                    titles_str += f" (+{len(blocking_tasks) - 3} more)"
+                first_blocker_id = blocking_tasks[0].get("id", "")
+
+                hints.append(
+                    Hint(
+                        category=HintCategory.COORDINATION,
+                        message=f"Task '{task_title}' blocked by: {titles_str}. Complete those first.",
+                        tool_call=f"task_show(task_id='{first_blocker_id}')",
+                        context={
+                            "task_id": task_id,
+                            "blocking_task_ids": [t.get("id") for t in blocking_tasks],
+                        },
+                    )
                 )
-            )
+            else:
+                hints.append(
+                    Hint(
+                        category=HintCategory.COORDINATION,
+                        message=f"Task '{task_title}' is now blocked. Resolve dependencies to continue.",
+                        tool_call=f"task_show(task_id='{task_id}')",
+                        context={"task_id": task_id},
+                    )
+                )
 
         return HintCollection(hints=hints)
 
@@ -525,6 +547,347 @@ class HintGenerator:
                         "met_count": met_count,
                         "total_count": total_count,
                         "remaining": remaining,
+                    },
+                )
+            ]
+        )
+
+    # --- Task Memory Operations Hints ---
+
+    def post_acceptance_criteria_add(
+        self,
+        task_id: str,
+        task_title: str,
+        criteria_count: int,
+    ) -> HintCollection:
+        """
+        Generate hints after adding acceptance criteria.
+
+        Args:
+            task_id: Task ID
+            task_title: Task title
+            criteria_count: Total criteria count after addition
+
+        Returns:
+            HintCollection with workflow guidance
+        """
+        if not self.enabled:
+            return self._empty()
+
+        return HintCollection(
+            hints=[
+                Hint(
+                    category=HintCategory.WORKFLOW,
+                    message=f"Criterion added ({criteria_count} total for '{task_title}'). "
+                    "Add more criteria or start working.",
+                    tool_call=f"task_update(task_id='{task_id}', status='in-progress')",
+                    context={
+                        "task_id": task_id,
+                        "criteria_count": criteria_count,
+                    },
+                )
+            ]
+        )
+
+    def post_research_add(
+        self,
+        task_id: str,
+        task_title: str,
+        research_type: str,
+    ) -> HintCollection:
+        """
+        Generate hints after adding research to a task.
+
+        Args:
+            task_id: Task ID
+            task_title: Task title
+            research_type: Type of research added
+
+        Returns:
+            HintCollection with progress guidance
+        """
+        if not self.enabled:
+            return self._empty()
+
+        return HintCollection(
+            hints=[
+                Hint(
+                    category=HintCategory.PROGRESS,
+                    message=f"Research recorded for '{task_title}'. Continue implementing.",
+                    tool_call=None,  # Agent should continue work
+                    context={
+                        "task_id": task_id,
+                        "research_type": research_type,
+                    },
+                )
+            ]
+        )
+
+    def post_implementation_note_add(
+        self,
+        task_id: str,
+        task_title: str,
+        unmet_criteria: Optional[List[Dict[str, Any]]] = None,
+    ) -> HintCollection:
+        """
+        Generate hints after adding an implementation note.
+
+        Args:
+            task_id: Task ID
+            task_title: Task title
+            unmet_criteria: Optional list of unmet acceptance criteria
+
+        Returns:
+            HintCollection with workflow guidance
+        """
+        if not self.enabled:
+            return self._empty()
+
+        if unmet_criteria and len(unmet_criteria) > 0:
+            first_criteria_id = unmet_criteria[0].get("id", "")
+            return HintCollection(
+                hints=[
+                    Hint(
+                        category=HintCategory.WORKFLOW,
+                        message=f"Implementation note added for '{task_title}'. "
+                        "Mark criteria as you complete them.",
+                        tool_call=f"task_acceptance_criteria_mark_met(criteria_id='{first_criteria_id}')",
+                        context={
+                            "task_id": task_id,
+                            "unmet_count": len(unmet_criteria),
+                            "criteria_ids": [c.get("id") for c in unmet_criteria],
+                        },
+                    )
+                ]
+            )
+        else:
+            return HintCollection(
+                hints=[
+                    Hint(
+                        category=HintCategory.WORKFLOW,
+                        message=f"Implementation note added for '{task_title}'. "
+                        "Continue implementing.",
+                        tool_call=None,
+                        context={"task_id": task_id},
+                    )
+                ]
+            )
+
+    def post_testing_step_add(
+        self,
+        task_id: str,
+        task_title: str,
+        step_type: str,
+    ) -> HintCollection:
+        """
+        Generate hints after adding a testing step.
+
+        Args:
+            task_id: Task ID
+            task_title: Task title
+            step_type: Type of testing step added
+
+        Returns:
+            HintCollection with workflow guidance
+        """
+        if not self.enabled:
+            return self._empty()
+
+        return HintCollection(
+            hints=[
+                Hint(
+                    category=HintCategory.WORKFLOW,
+                    message=f"Testing step added for '{task_title}'. "
+                    "Run tests to verify implementation.",
+                    tool_call=None,  # Agent should run tests
+                    context={
+                        "task_id": task_id,
+                        "step_type": step_type,
+                    },
+                )
+            ]
+        )
+
+    # --- Campaign Memory Operations Hints ---
+
+    def post_campaign_research_add(
+        self,
+        campaign_id: str,
+        campaign_name: str,
+        research_type: str,
+        task_count: int = 0,
+    ) -> HintCollection:
+        """
+        Generate hints after adding research to a campaign.
+
+        Args:
+            campaign_id: Campaign ID
+            campaign_name: Campaign name
+            research_type: Type of research added
+            task_count: Number of tasks in the campaign
+
+        Returns:
+            HintCollection with workflow guidance
+        """
+        if not self.enabled:
+            return self._empty()
+
+        if task_count == 0:
+            return HintCollection(
+                hints=[
+                    Hint(
+                        category=HintCategory.WORKFLOW,
+                        message="Campaign research added. Continue planning or create tasks.",
+                        tool_call=f"task_create(campaign_id='{campaign_id}', title='...')",
+                        context={
+                            "campaign_id": campaign_id,
+                            "research_type": research_type,
+                        },
+                    )
+                ]
+            )
+        else:
+            return HintCollection(
+                hints=[
+                    Hint(
+                        category=HintCategory.PROGRESS,
+                        message="Campaign research added. Continue planning or working on tasks.",
+                        tool_call=None,  # Agent continues work
+                        context={
+                            "campaign_id": campaign_id,
+                            "research_type": research_type,
+                            "task_count": task_count,
+                        },
+                    )
+                ]
+            )
+
+    # --- Bulk Operations Hints ---
+
+    def post_campaign_create_with_tasks(
+        self,
+        campaign_id: str,
+        campaign_name: str,
+        task_count: int,
+        tasks_with_criteria: int = 0,
+    ) -> HintCollection:
+        """
+        Generate hints after creating campaign with tasks atomically.
+
+        Args:
+            campaign_id: Created campaign ID
+            campaign_name: Campaign name
+            task_count: Number of tasks created
+            tasks_with_criteria: Number of tasks with acceptance criteria
+
+        Returns:
+            HintCollection with execution guidance
+        """
+        if not self.enabled:
+            return self._empty()
+
+        hints: List[Hint] = []
+
+        if task_count == 0:
+            hints.append(
+                Hint(
+                    category=HintCategory.WORKFLOW,
+                    message=(
+                        f"Campaign '{campaign_name}' created with no tasks. "
+                        "Add tasks to begin."
+                    ),
+                    tool_call=f"task_create(campaign_id='{campaign_id}', title='...')",
+                    context={"campaign_id": campaign_id},
+                )
+            )
+        elif tasks_with_criteria == task_count:
+            # All tasks have criteria - ready for execution
+            hints.append(
+                Hint(
+                    category=HintCategory.WORKFLOW,
+                    message=(
+                        f"Campaign '{campaign_name}' created with {task_count} tasks. "
+                        "All tasks have acceptance criteria. Ready for execution."
+                    ),
+                    tool_call=(
+                        f"campaign_get_next_actionable_task(campaign_id='{campaign_id}')"
+                    ),
+                    context={
+                        "campaign_id": campaign_id,
+                        "task_count": task_count,
+                        "with_criteria": tasks_with_criteria,
+                    },
+                )
+            )
+        else:
+            # Some tasks need criteria
+            missing = task_count - tasks_with_criteria
+            hints.append(
+                Hint(
+                    category=HintCategory.WORKFLOW,
+                    message=(
+                        f"Campaign '{campaign_name}' created with {task_count} tasks. "
+                        f"{missing} tasks need acceptance criteria."
+                    ),
+                    tool_call=(
+                        f"campaign_get_next_actionable_task(campaign_id='{campaign_id}')"
+                    ),
+                    context={
+                        "campaign_id": campaign_id,
+                        "task_count": task_count,
+                        "with_criteria": tasks_with_criteria,
+                        "without_criteria": missing,
+                    },
+                )
+            )
+
+        return HintCollection(hints=hints)
+
+    # --- Parallel Execution Hints ---
+
+    def actionable_tasks_hints(
+        self,
+        tasks: List[Dict[str, Any]],
+        campaign_id: str,
+        campaign_progress: Optional[Dict[str, Any]] = None,
+    ) -> HintCollection:
+        """
+        Generate hints for parallel task execution.
+
+        Args:
+            tasks: List of actionable task data
+            campaign_id: Campaign ID
+            campaign_progress: Optional progress data
+
+        Returns:
+            HintCollection with parallel execution guidance
+        """
+        if not self.enabled:
+            return self._empty()
+
+        if not tasks or len(tasks) == 0:
+            # Delegate to existing no-actionable logic
+            return self.actionable_task_hints(
+                task_data=None,
+                campaign_id=campaign_id,
+                campaign_progress=campaign_progress,
+                no_actionable=True,
+            )
+
+        count = len(tasks)
+        first_task_id = tasks[0].get("id", "")
+
+        return HintCollection(
+            hints=[
+                Hint(
+                    category=HintCategory.WORKFLOW,
+                    message=f"{count} actionable task{'s' if count > 1 else ''} available. "
+                    "Claim by setting status to 'in-progress' before starting.",
+                    tool_call=f"task_update(task_id='{first_task_id}', status='in-progress')",
+                    context={
+                        "campaign_id": campaign_id,
+                        "actionable_count": count,
+                        "task_ids": [t.get("id") for t in tasks],
                     },
                 )
             ]

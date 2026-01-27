@@ -444,6 +444,121 @@ class CampaignTaskPane(Vertical):
         self._campaign_search_query = event.query
         self._update_campaign_header(search_query=event.query)
 
+    # =========================================================================
+    # New Task Creation Handlers (Phase 3.1)
+    # =========================================================================
+
+    @on(TaskDataTable.NewTaskRequested)
+    async def on_task_data_table_new_task_requested(
+        self, event: TaskDataTable.NewTaskRequested
+    ) -> None:
+        """Handle new task request - show creation modal."""
+        campaign_id = event.campaign_id
+
+        # Get campaign name for display
+        campaign_list = self.query_one("#campaign-list", CampaignListWidget)
+        campaign = next(
+            (c for c in campaign_list._all_campaigns if c.get("id") == campaign_id),
+            None,
+        )
+        campaign_name = campaign.get("name", "Unknown") if campaign else "Unknown"
+
+        from task_crusade_mcp.tui.widgets.new_task_modal import NewTaskModal
+
+        modal = NewTaskModal(campaign_id=campaign_id, campaign_name=campaign_name)
+        await self.app.push_screen(modal, callback=self._handle_new_task_result)
+
+    def _handle_new_task_result(self, result: tuple[bool, dict | None] | bool | None) -> None:
+        """Handle new task modal result."""
+        if not isinstance(result, tuple) or not result[0]:
+            return
+
+        _, task_data = result
+        if task_data:
+            self.app.call_later(self._perform_task_create, task_data)
+
+    async def _perform_task_create(self, task_data: dict) -> None:
+        """Perform the task creation."""
+        try:
+            new_task = await self.data_service.create_task(
+                campaign_id=task_data["campaign_id"],
+                title=task_data["title"],
+                priority=task_data.get("priority", "medium"),
+                description=task_data.get("description", ""),
+            )
+
+            self.notify(f"Task created: {task_data['title']}", severity="information")
+
+            # Refresh task list and select the new task
+            task_data_table = self.query_one("#task-list", TaskDataTable)
+            await task_data_table.refresh_tasks()
+
+            # Select the newly created task
+            new_task_id = new_task.get("id")
+            if new_task_id:
+                self._last_selected_task_id = new_task_id
+                self._restore_task_selection(task_data_table, new_task_id)
+
+                # Load task details
+                task_detail = self.query_one("#task-detail", TaskDetailWidget)
+                self._update_detail_header("TASK DETAIL")
+                await task_detail.load_task(new_task_id)
+
+        except Exception as e:
+            logger.error(f"Failed to create task: {e}")
+            self.notify(f"Create failed: {e}", severity="error")
+
+    # =========================================================================
+    # New Campaign Creation Handlers (Phase 3.2)
+    # =========================================================================
+
+    @on(CampaignListWidget.NewCampaignRequested)
+    async def on_campaign_list_widget_new_campaign_requested(
+        self, _event: CampaignListWidget.NewCampaignRequested
+    ) -> None:
+        """Handle new campaign request - show creation modal."""
+        from task_crusade_mcp.tui.widgets.new_campaign_modal import NewCampaignModal
+
+        modal = NewCampaignModal()
+        await self.app.push_screen(modal, callback=self._handle_new_campaign_result)
+
+    def _handle_new_campaign_result(self, result: tuple[bool, dict | None] | bool | None) -> None:
+        """Handle new campaign modal result."""
+        if not isinstance(result, tuple) or not result[0]:
+            return
+
+        _, campaign_data = result
+        if campaign_data:
+            self.app.call_later(self._perform_campaign_create, campaign_data)
+
+    async def _perform_campaign_create(self, campaign_data: dict) -> None:
+        """Perform the campaign creation."""
+        try:
+            new_campaign = await self.data_service.create_campaign(
+                name=campaign_data["name"],
+                priority=campaign_data.get("priority", "medium"),
+                description=campaign_data.get("description", ""),
+            )
+
+            self.notify(f"Campaign created: {campaign_data['name']}", severity="information")
+
+            # Refresh campaign list and select the new campaign
+            campaign_list = self.query_one("#campaign-list", CampaignListWidget)
+            await campaign_list.refresh_campaigns()
+
+            # Select the newly created campaign
+            new_campaign_id = new_campaign.get("id")
+            if new_campaign_id:
+                self._last_selected_campaign_id = new_campaign_id
+                self._restore_campaign_selection(campaign_list, new_campaign_id)
+
+                # Trigger campaign selection to load tasks and details
+                campaign_list.post_message(CampaignListWidget.CampaignSelected(new_campaign_id))
+
+        except Exception as e:
+            logger.error(f"Failed to create campaign: {e}")
+            self.notify(f"Create failed: {e}", severity="error")
+
     def _get_focusable_panes(
         self,
     ) -> list[CampaignListWidget | TaskDataTable | TaskDetailWidget]:

@@ -177,6 +177,40 @@ class TUIDataService:
         tasks = await self.get_tasks(campaign_id)
         return len(tasks)
 
+    async def create_campaign(
+        self, name: str, priority: str = "medium", description: str = ""
+    ) -> dict[str, Any]:
+        """Create a new campaign.
+
+        Args:
+            name: Campaign name.
+            priority: Campaign priority (low/medium/high).
+            description: Optional campaign description.
+
+        Returns:
+            Dictionary containing the created campaign data.
+
+        Raises:
+            DataUpdateError: If campaign cannot be created.
+        """
+
+        def _sync_create() -> dict[str, Any]:
+            service = self._get_campaign_service()
+            result = service.create_campaign(
+                name=name,
+                priority=priority,
+                description=description if description else None,
+            )
+            if result.is_failure:
+                raise DataUpdateError(
+                    "create campaign",
+                    "",
+                    result.error_message or "Unknown error",
+                )
+            return result.data
+
+        return await asyncio.to_thread(_sync_create)
+
     async def get_campaign_summary(self, campaign_id: str) -> dict[str, Any] | None:
         """Get campaign summary for the detail panel.
 
@@ -231,6 +265,46 @@ class TUIDataService:
     # =========================================================================
     # Task Operations
     # =========================================================================
+
+    async def create_task(
+        self,
+        campaign_id: str,
+        title: str,
+        priority: str = "medium",
+        description: str = "",
+    ) -> dict[str, Any]:
+        """Create a new task in a campaign.
+
+        Args:
+            campaign_id: ID of the campaign to create the task in.
+            title: Task title.
+            priority: Task priority (low/medium/high/critical).
+            description: Optional task description.
+
+        Returns:
+            Dictionary containing the created task data.
+
+        Raises:
+            DataUpdateError: If task cannot be created.
+        """
+
+        def _sync_create() -> dict[str, Any]:
+            service = self._get_task_service()
+            result = service.create_task(
+                title=title,
+                campaign_id=campaign_id,
+                priority=priority,
+                description=description if description else None,
+            )
+            if result.is_failure:
+                raise DataUpdateError(
+                    "create task",
+                    "",
+                    result.error_message or "Unknown error",
+                )
+            return result.data
+
+        return await asyncio.to_thread(_sync_create)
 
     async def get_tasks(self, campaign_id: str) -> list[dict[str, Any]]:
         """Get tasks for the task list widget.

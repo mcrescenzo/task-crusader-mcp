@@ -16,6 +16,8 @@ from textual import on
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.css.query import NoMatches
+from textual.events import Click
+from textual.message import Message
 from textual.widgets import Button, LoadingIndicator, Static
 
 from task_crusade_mcp.tui.constants import (
@@ -27,6 +29,36 @@ from task_crusade_mcp.tui.exceptions import DataFetchError, DataUpdateError
 from task_crusade_mcp.tui.services.data_service import TUIDataService
 
 logger = logging.getLogger(__name__)
+
+
+class ClickableCriterion(Static):
+    """A clickable acceptance criterion widget."""
+
+    class CriterionClicked(Message):
+        """Emitted when a criterion is clicked."""
+
+        def __init__(self, criterion_index: int, entity_id: str) -> None:
+            super().__init__()
+            self.criterion_index = criterion_index
+            self.entity_id = entity_id
+
+    def __init__(
+        self,
+        content: Text,
+        criterion_index: int,
+        entity_id: str,
+        *,
+        id: str | None = None,
+        classes: str | None = None,
+    ) -> None:
+        super().__init__(content, id=id, classes=classes)
+        self._criterion_index = criterion_index
+        self._entity_id = entity_id
+
+    def on_click(self, event: Click) -> None:
+        """Handle click by emitting CriterionClicked message."""
+        event.stop()
+        self.post_message(self.CriterionClicked(self._criterion_index, self._entity_id))
 
 
 class TaskDetailWidget(VerticalScroll):
@@ -367,7 +399,16 @@ class TaskDetailWidget(VerticalScroll):
 
             widget_id = f"criterion-{task_id_prefix}-{idx}"
             self._criterion_widget_ids.append(widget_id)
-            await self.mount(Static(crit_display, id=widget_id, classes=css_classes))
+            entity_id = criterion.get("id", "")
+            await self.mount(
+                ClickableCriterion(
+                    crit_display,
+                    criterion_index=idx,
+                    entity_id=entity_id,
+                    id=widget_id,
+                    classes=css_classes,
+                )
+            )
 
         progress_text = Text()
         progress_text.append(f"Progress: {met_count}/{total_count} criteria met")
@@ -629,6 +670,13 @@ class TaskDetailWidget(VerticalScroll):
             self.app.copy_to_clipboard(self._task_id)
             self.notify("Task ID copied to clipboard")
 
+    @on(ClickableCriterion.CriterionClicked)
+    def on_criterion_clicked(self, event: ClickableCriterion.CriterionClicked) -> None:
+        """Handle criterion click by selecting it."""
+        if event.criterion_index != self._selected_criterion_index:
+            self._selected_criterion_index = event.criterion_index
+            self._update_criterion_selection()
+
     def action_next_criterion(self) -> None:
         """Move selection to the next acceptance criterion."""
         if not self._criteria_data:
@@ -653,7 +701,7 @@ class TaskDetailWidget(VerticalScroll):
         """Update the visual selection highlighting for criteria."""
         for idx, widget_id in enumerate(self._criterion_widget_ids):
             try:
-                widget = self.query_one(f"#{widget_id}", Static)
+                widget = self.query_one(f"#{widget_id}", ClickableCriterion)
                 if idx == self._selected_criterion_index:
                     widget.add_class("criteria-selected")
                 else:
@@ -670,10 +718,10 @@ class TaskDetailWidget(VerticalScroll):
             return
 
         criterion = self._criteria_data[self._selected_criterion_index]
-        entity_id = criterion.get("entity_id")
+        entity_id = criterion.get("id")
 
         if not entity_id:
-            self.notify("Cannot toggle: criterion has no entity ID", severity="error")
+            self.notify("Cannot toggle: criterion has no ID", severity="error")
             return
 
         current_is_met = criterion.get("is_met", False)
@@ -705,7 +753,7 @@ class TaskDetailWidget(VerticalScroll):
         widget_id = self._criterion_widget_ids[idx]
 
         try:
-            widget = self.query_one(f"#{widget_id}", Static)
+            widget = self.query_one(f"#{widget_id}", ClickableCriterion)
 
             criterion_text = (
                 criterion.get("content") or criterion.get("notes") or criterion.get("name", "")

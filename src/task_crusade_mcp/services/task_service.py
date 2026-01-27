@@ -81,7 +81,10 @@ class TaskService:
             return DomainError.operation_failed(
                 operation=operation,
                 reason="Operation succeeded but returned no data",
-                suggestions=["Check database consistency", "Verify repository implementation"],
+                suggestions=[
+                    "Check database consistency",
+                    "Verify repository implementation",
+                ],
             )
 
         return result
@@ -124,12 +127,26 @@ class TaskService:
         # Normalize and validate title
         title = title.strip() if title else ""
         if not title:
-            return DomainError.validation_error("Task title cannot be empty or whitespace")
+            return DomainError.validation_error(
+                "Task title cannot be empty or whitespace"
+            )
 
         # Verify campaign exists
         campaign_result = self.campaign_repo.get(campaign_id)
         if campaign_result.is_failure:
             return DomainError.not_found("Campaign", campaign_id)
+
+        # Validate dependencies exist
+        if dependencies:
+            invalid_deps = []
+            for dep_id in dependencies:
+                dep_result = self.task_repo.get(dep_id)
+                if dep_result.is_failure:
+                    invalid_deps.append(dep_id)
+            if invalid_deps:
+                return DomainError.validation_error(
+                    f"Invalid dependency task IDs: {invalid_deps}"
+                )
 
         # Create task
         result = self.task_repo.create(
@@ -249,6 +266,24 @@ class TaskService:
         if old_task_result.is_success and old_task_result.data:
             old_status = old_task_result.data.status
 
+        # Validate dependencies if being updated
+        dependencies = updates.get("dependencies")
+        if dependencies is not None:
+            invalid_deps = []
+            for dep_id in dependencies:
+                # Prevent self-dependency
+                if dep_id == task_id:
+                    return DomainError.validation_error(
+                        f"Task cannot depend on itself: {task_id}"
+                    )
+                dep_result = self.task_repo.get(dep_id)
+                if dep_result.is_failure:
+                    invalid_deps.append(dep_id)
+            if invalid_deps:
+                return DomainError.validation_error(
+                    f"Invalid dependency task IDs: {invalid_deps}"
+                )
+
         result = self.task_repo.update(task_id, updates)
         if result.is_failure:
             return result
@@ -263,6 +298,24 @@ class TaskService:
             criteria_count = len(criteria)
             unmet_count = len([c for c in criteria if not c.get("is_met", False)])
 
+            # Get blocking task info when status changes to blocked
+            blocking_tasks: Optional[List[Dict[str, Any]]] = None
+            if new_status == "blocked":
+                dependencies = task_data.get("dependencies", [])
+                if dependencies:
+                    blocking_tasks = []
+                    for dep_id in dependencies:
+                        dep_result = self.task_repo.get(dep_id)
+                        if dep_result.is_success and dep_result.data:
+                            dep_data = dep_result.data
+                            # Only include non-completed tasks as blockers
+                            if dep_data.status != "done":
+                                blocking_tasks.append({
+                                    "id": dep_data.id,
+                                    "title": dep_data.title,
+                                    "status": dep_data.status,
+                                })
+
             hints = self._hint_generator.post_task_status_change(
                 task_id=task_id,
                 task_title=task_data.get("title", ""),
@@ -271,6 +324,7 @@ class TaskService:
                 new_status=new_status,
                 criteria_count=criteria_count,
                 unmet_criteria_count=unmet_count,
+                blocking_tasks=blocking_tasks,
             )
             hint_data = self._hint_generator.format_for_response(hints)
             task_data.update(hint_data)
@@ -401,15 +455,29 @@ class TaskService:
         if assoc_result.is_failure:
             return assoc_result
 
-        return DomainSuccess.create(
-            data={
-                "id": entity_id,
-                "task_id": task_id,
-                "content": content,
-                "is_met": False,
-                "order_index": assoc_result.data.order_index,
-            }
-        )
+        result_data: Dict[str, Any] = {
+            "id": entity_id,
+            "task_id": task_id,
+            "content": content,
+            "is_met": False,
+            "order_index": assoc_result.data.order_index,
+        }
+
+        # Generate hints if hint generator is available
+        if self._hint_generator:
+            task_title = (
+                task_result.data.title if task_result.is_success and task_result.data else "Unknown"
+            )
+            criteria_count = len(self._get_task_criteria(task_id))
+            hints = self._hint_generator.post_acceptance_criteria_add(
+                task_id=task_id,
+                task_title=task_title,
+                criteria_count=criteria_count,
+            )
+            hint_data = self._hint_generator.format_for_response(hints)
+            result_data.update(hint_data)
+
+        return DomainSuccess.create(data=result_data)
 
     def mark_criteria_met(self, criteria_id: str) -> DomainResult[Dict[str, Any]]:
         """Mark an acceptance criterion as met."""
@@ -588,15 +656,28 @@ class TaskService:
         if assoc_result.is_failure:
             return assoc_result
 
-        return DomainSuccess.create(
-            data={
-                "id": entity_id,
-                "task_id": task_id,
-                "content": content,
-                "type": research_type,
-                "order_index": assoc_result.data.order_index,
-            }
-        )
+        result_data: Dict[str, Any] = {
+            "id": entity_id,
+            "task_id": task_id,
+            "content": content,
+            "type": research_type,
+            "order_index": assoc_result.data.order_index,
+        }
+
+        # Generate hints if hint generator is available
+        if self._hint_generator:
+            task_title = (
+                task_result.data.title if task_result.is_success and task_result.data else "Unknown"
+            )
+            hints = self._hint_generator.post_research_add(
+                task_id=task_id,
+                task_title=task_title,
+                research_type=research_type,
+            )
+            hint_data = self._hint_generator.format_for_response(hints)
+            result_data.update(hint_data)
+
+        return DomainSuccess.create(data=result_data)
 
     # --- Implementation Notes Operations ---
 
@@ -655,14 +736,31 @@ class TaskService:
         if assoc_result.is_failure:
             return assoc_result
 
-        return DomainSuccess.create(
-            data={
-                "id": entity_id,
-                "task_id": task_id,
-                "content": content,
-                "order_index": assoc_result.data.order_index,
-            }
-        )
+        result_data: Dict[str, Any] = {
+            "id": entity_id,
+            "task_id": task_id,
+            "content": content,
+            "order_index": assoc_result.data.order_index,
+        }
+
+        # Generate hints if hint generator is available
+        if self._hint_generator:
+            task_title = (
+                task_result.data.title if task_result.is_success and task_result.data else "Unknown"
+            )
+            # Get unmet criteria for the hint
+            criteria = self._get_task_criteria(task_id)
+            unmet_criteria = [c for c in criteria if not c.get("is_met", False)]
+
+            hints = self._hint_generator.post_implementation_note_add(
+                task_id=task_id,
+                task_title=task_title,
+                unmet_criteria=unmet_criteria,
+            )
+            hint_data = self._hint_generator.format_for_response(hints)
+            result_data.update(hint_data)
+
+        return DomainSuccess.create(data=result_data)
 
     # --- Testing Steps Operations ---
 
@@ -725,15 +823,28 @@ class TaskService:
         if assoc_result.is_failure:
             return assoc_result
 
-        return DomainSuccess.create(
-            data={
-                "id": entity_id,
-                "task_id": task_id,
-                "content": content,
-                "step_type": step_type,
-                "order_index": assoc_result.data.order_index,
-            }
-        )
+        result_data: Dict[str, Any] = {
+            "id": entity_id,
+            "task_id": task_id,
+            "content": content,
+            "step_type": step_type,
+            "order_index": assoc_result.data.order_index,
+        }
+
+        # Generate hints if hint generator is available
+        if self._hint_generator:
+            task_title = (
+                task_result.data.title if task_result.is_success and task_result.data else "Unknown"
+            )
+            hints = self._hint_generator.post_testing_step_add(
+                task_id=task_id,
+                task_title=task_title,
+                step_type=step_type,
+            )
+            hint_data = self._hint_generator.format_for_response(hints)
+            result_data.update(hint_data)
+
+        return DomainSuccess.create(data=result_data)
 
     # --- Internal helper methods ---
 
@@ -859,14 +970,939 @@ class TaskService:
             observations = entity.observations
             content = observations[0] if observations else ""
             step_type = entity.metadata.get("step_type", "verify")
+            test_status = entity.metadata.get("test_status", "pending")
 
             steps.append(
                 {
                     "id": entity.id,
                     "content": content,
                     "step_type": step_type,
+                    "test_status": test_status,
                     "order_index": assoc.order_index,
                 }
             )
 
         return steps
+
+    # --- Search & Analytics Operations ---
+
+    def search_tasks(
+        self,
+        query: str,
+        campaign_id: Optional[str] = None,
+        status: Optional[str] = None,
+        priority: Optional[str] = None,
+        limit: int = 50,
+    ) -> DomainResult[Dict[str, Any]]:
+        """
+        Full-text search across task titles and descriptions.
+
+        Args:
+            query: Search query string.
+            campaign_id: Optional filter by campaign.
+            status: Optional filter by status.
+            priority: Optional filter by priority.
+            limit: Maximum results to return.
+
+        Returns:
+            DomainResult with matching tasks.
+        """
+        query = query.strip().lower() if query else ""
+        if not query:
+            return DomainError.validation_error("Search query cannot be empty")
+
+        # Build filters
+        filters: Dict[str, Any] = {}
+        if campaign_id:
+            filters["campaign_id"] = campaign_id
+        if status:
+            filters["status"] = status
+        if priority:
+            filters["priority"] = priority
+
+        # Get all tasks matching filters
+        result = self.task_repo.list(filters=filters, limit=500)  # Get more for search
+        if result.is_failure:
+            return result
+
+        # Filter by query (case-insensitive search in title and description)
+        matching_tasks = []
+        for task_dto in result.data or []:
+            title_match = query in (task_dto.title or "").lower()
+            desc_match = query in (task_dto.description or "").lower()
+            if title_match or desc_match:
+                task_data = task_dto.to_dict()
+                # Add match info
+                task_data["_match"] = {
+                    "title": title_match,
+                    "description": desc_match,
+                }
+                matching_tasks.append(task_data)
+
+                if len(matching_tasks) >= limit:
+                    break
+
+        result_data: Dict[str, Any] = {
+            "query": query,
+            "total_matches": len(matching_tasks),
+            "tasks": matching_tasks,
+            "filters_applied": {
+                "campaign_id": campaign_id,
+                "status": status,
+                "priority": priority,
+            },
+        }
+
+        return DomainSuccess.create(data=result_data)
+
+    def get_task_stats(
+        self, campaign_id: Optional[str] = None
+    ) -> DomainResult[Dict[str, Any]]:
+        """
+        Get aggregate task statistics.
+
+        Args:
+            campaign_id: Optional filter by campaign.
+
+        Returns:
+            DomainResult with task statistics by status, priority, and type.
+        """
+        # Build filters
+        filters: Dict[str, Any] = {}
+        if campaign_id:
+            filters["campaign_id"] = campaign_id
+
+        # Get all tasks
+        result = self.task_repo.list(filters=filters, limit=1000)
+        if result.is_failure:
+            return result
+
+        tasks = result.data or []
+
+        # Calculate statistics
+        by_status: Dict[str, int] = {}
+        by_priority: Dict[str, int] = {}
+        by_type: Dict[str, int] = {}
+        by_campaign: Dict[str, int] = {}
+        total_with_criteria = 0
+        total_criteria_met = 0
+        total_criteria = 0
+
+        for task_dto in tasks:
+            # Count by status
+            status = task_dto.status or "unknown"
+            by_status[status] = by_status.get(status, 0) + 1
+
+            # Count by priority
+            priority = task_dto.priority or "medium"
+            by_priority[priority] = by_priority.get(priority, 0) + 1
+
+            # Count by type
+            task_type = task_dto.type or "code"
+            by_type[task_type] = by_type.get(task_type, 0) + 1
+
+            # Count by campaign
+            cid = task_dto.campaign_id
+            by_campaign[cid] = by_campaign.get(cid, 0) + 1
+
+            # Count criteria
+            criteria = self._get_task_criteria(task_dto.id)
+            if criteria:
+                total_with_criteria += 1
+                total_criteria += len(criteria)
+                total_criteria_met += len([c for c in criteria if c.get("is_met")])
+
+        # Calculate completion rate
+        total = len(tasks)
+        completed = by_status.get("done", 0)
+        completion_rate = (completed / total * 100) if total > 0 else 0.0
+
+        # Calculate criteria completion rate
+        criteria_rate = (
+            (total_criteria_met / total_criteria * 100)
+            if total_criteria > 0
+            else 0.0
+        )
+
+        result_data: Dict[str, Any] = {
+            "total_tasks": total,
+            "completion_rate": round(completion_rate, 1),
+            "by_status": by_status,
+            "by_priority": by_priority,
+            "by_type": by_type,
+            "by_campaign": by_campaign if not campaign_id else None,
+            "criteria": {
+                "tasks_with_criteria": total_with_criteria,
+                "total_criteria": total_criteria,
+                "criteria_met": total_criteria_met,
+                "criteria_completion_rate": round(criteria_rate, 1),
+            },
+        }
+
+        # Remove None values
+        result_data = {k: v for k, v in result_data.items() if v is not None}
+
+        return DomainSuccess.create(data=result_data)
+
+    def get_dependency_info(self, task_id: str) -> DomainResult[Dict[str, Any]]:
+        """
+        Get upstream dependencies (blockers) and downstream dependents for a task.
+
+        Args:
+            task_id: Task UUID.
+
+        Returns:
+            DomainResult with dependency information.
+        """
+        # Verify task exists
+        task_result = self.task_repo.get(task_id)
+        if task_result.is_failure:
+            return task_result
+
+        task_dto = task_result.data
+        task_data = task_dto.to_dict()
+
+        # Get upstream dependencies (tasks this task depends on)
+        upstream: List[Dict[str, Any]] = []
+        blocking: List[Dict[str, Any]] = []
+        for dep_id in task_dto.dependencies or []:
+            dep_result = self.task_repo.get(dep_id)
+            if dep_result.is_success and dep_result.data:
+                dep_data = dep_result.data
+                dep_info = {
+                    "id": dep_data.id,
+                    "title": dep_data.title,
+                    "status": dep_data.status,
+                }
+                upstream.append(dep_info)
+                if dep_data.status != "done":
+                    blocking.append(dep_info)
+
+        # Get downstream dependents (tasks that depend on this task)
+        campaign_id = task_dto.campaign_id
+        all_tasks_result = self.task_repo.list(
+            filters={"campaign_id": campaign_id}
+        )
+        downstream: List[Dict[str, Any]] = []
+        if all_tasks_result.is_success:
+            for other_task in all_tasks_result.data or []:
+                if task_id in (other_task.dependencies or []):
+                    downstream.append({
+                        "id": other_task.id,
+                        "title": other_task.title,
+                        "status": other_task.status,
+                    })
+
+        is_blocked = len(blocking) > 0
+        is_blocking_others = (
+            task_dto.status != "done" and len(downstream) > 0
+        )
+
+        result_data: Dict[str, Any] = {
+            "task": {
+                "id": task_dto.id,
+                "title": task_dto.title,
+                "status": task_dto.status,
+            },
+            "upstream_dependencies": upstream,
+            "downstream_dependents": downstream,
+            "blocking_tasks": blocking,
+            "summary": {
+                "total_upstream": len(upstream),
+                "total_downstream": len(downstream),
+                "is_blocked": is_blocked,
+                "is_blocking_others": is_blocking_others,
+                "blocking_count": len(blocking),
+            },
+        }
+
+        return DomainSuccess.create(data=result_data)
+
+    # --- Bulk & Workflow Operations ---
+
+    def bulk_update_tasks(
+        self,
+        task_ids: List[str],
+        status: Optional[str] = None,
+        priority: Optional[str] = None,
+    ) -> DomainResult[Dict[str, Any]]:
+        """
+        Update multiple tasks at once.
+
+        Args:
+            task_ids: List of task UUIDs to update.
+            status: New status for all tasks.
+            priority: New priority for all tasks.
+
+        Returns:
+            DomainResult with update summary.
+        """
+        if not task_ids:
+            return DomainError.validation_error("No task IDs provided")
+
+        updates: Dict[str, Any] = {}
+        if status:
+            updates["status"] = status
+        if priority:
+            updates["priority"] = priority
+
+        if not updates:
+            return DomainError.validation_error("No updates provided")
+
+        updated: List[Dict[str, Any]] = []
+        failed: List[Dict[str, Any]] = []
+
+        for task_id in task_ids:
+            result = self.task_repo.update(task_id, updates)
+            if result.is_success and result.data:
+                updated.append({
+                    "id": task_id,
+                    "title": result.data.title,
+                    "status": result.data.status,
+                    "priority": result.data.priority,
+                })
+            else:
+                failed.append({
+                    "id": task_id,
+                    "error": result.error_message or "Update failed",
+                })
+
+        result_data: Dict[str, Any] = {
+            "updated_count": len(updated),
+            "failed_count": len(failed),
+            "updated_tasks": updated,
+            "failed_tasks": failed,
+            "updates_applied": updates,
+        }
+
+        return DomainSuccess.create(data=result_data)
+
+    def create_task_from_template(
+        self,
+        template_name: str,
+        campaign_id: str,
+        title: Optional[str] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> DomainResult[Dict[str, Any]]:
+        """
+        Create a task from a predefined template.
+
+        Args:
+            template_name: Name of the template to use.
+            campaign_id: Campaign to create the task in.
+            title: Override title (optional).
+            overrides: Additional field overrides.
+
+        Returns:
+            DomainResult with created task.
+        """
+        # Define templates
+        templates: Dict[str, Dict[str, Any]] = {
+            "bug-fix": {
+                "title": "Bug Fix",
+                "description": "Fix reported bug",
+                "type": "code",
+                "priority": "high",
+                "acceptance_criteria": [
+                    "Bug is reproducible before fix",
+                    "Fix resolves the reported issue",
+                    "No regressions introduced",
+                    "Tests added for the fix",
+                ],
+            },
+            "feature": {
+                "title": "New Feature",
+                "description": "Implement new feature",
+                "type": "code",
+                "priority": "medium",
+                "acceptance_criteria": [
+                    "Feature implemented per requirements",
+                    "Unit tests written",
+                    "Documentation updated",
+                ],
+            },
+            "refactor": {
+                "title": "Code Refactoring",
+                "description": "Refactor code for improved quality",
+                "type": "refactor",
+                "priority": "low",
+                "acceptance_criteria": [
+                    "Code refactored successfully",
+                    "All existing tests pass",
+                    "No functional changes",
+                ],
+            },
+            "research": {
+                "title": "Research Task",
+                "description": "Research and document findings",
+                "type": "research",
+                "priority": "medium",
+                "acceptance_criteria": [
+                    "Research completed",
+                    "Findings documented",
+                    "Recommendations provided",
+                ],
+            },
+            "test": {
+                "title": "Testing Task",
+                "description": "Write or improve tests",
+                "type": "test",
+                "priority": "medium",
+                "acceptance_criteria": [
+                    "Tests written",
+                    "Tests pass",
+                    "Coverage improved",
+                ],
+            },
+            "documentation": {
+                "title": "Documentation",
+                "description": "Write or update documentation",
+                "type": "documentation",
+                "priority": "low",
+                "acceptance_criteria": [
+                    "Documentation written",
+                    "Documentation reviewed",
+                    "Documentation published",
+                ],
+            },
+        }
+
+        template = templates.get(template_name)
+        if not template:
+            available = ", ".join(templates.keys())
+            return DomainError.not_found(
+                "Template",
+                template_name,
+                suggestions=[f"Available templates: {available}"],
+            )
+
+        # Build task data from template
+        task_data = template.copy()
+        criteria = task_data.pop("acceptance_criteria", [])
+
+        # Apply title override
+        if title:
+            task_data["title"] = title
+
+        # Apply other overrides
+        if overrides:
+            task_data.update(overrides)
+
+        # Create the task
+        return self.create_task(
+            title=task_data.get("title", "New Task"),
+            campaign_id=campaign_id,
+            description=task_data.get("description"),
+            priority=task_data.get("priority", "medium"),
+            task_type=task_data.get("type", "code"),
+            acceptance_criteria=criteria,
+        )
+
+    def complete_task_with_workflow(
+        self, task_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """
+        Complete a task with full validation.
+
+        Validates:
+        - All acceptance criteria are met
+        - All dependencies are completed
+        - Task is not already completed
+
+        Args:
+            task_id: Task UUID.
+
+        Returns:
+            DomainResult with completed task or validation errors.
+        """
+        # Get task
+        task_result = self.task_repo.get(task_id)
+        if task_result.is_failure:
+            return task_result
+
+        task_dto = task_result.data
+
+        # Check if already completed
+        if task_dto.status == "done":
+            return DomainError.business_rule_violation(
+                rule="task_already_completed",
+                message="Task is already completed",
+            )
+
+        # Check dependencies
+        blocking_deps = []
+        for dep_id in task_dto.dependencies or []:
+            dep_result = self.task_repo.get(dep_id)
+            if dep_result.is_success and dep_result.data:
+                if dep_result.data.status != "done":
+                    blocking_deps.append({
+                        "id": dep_id,
+                        "title": dep_result.data.title,
+                        "status": dep_result.data.status,
+                    })
+
+        if blocking_deps:
+            return DomainError.business_rule_violation(
+                rule="dependencies_not_met",
+                message=f"Cannot complete: {len(blocking_deps)} blocking dependencies",
+                details={"blocking_dependencies": blocking_deps},
+                suggestions=[
+                    f"Complete task '{blocking_deps[0]['title']}' first"
+                    if blocking_deps
+                    else "Complete blocking dependencies"
+                ],
+            )
+
+        # Check acceptance criteria
+        criteria = self._get_task_criteria(task_id)
+        unmet_criteria = [c for c in criteria if not c.get("is_met", False)]
+
+        if unmet_criteria:
+            return DomainError.business_rule_violation(
+                rule="criteria_not_met",
+                message=f"Cannot complete: {len(unmet_criteria)} unmet criteria",
+                details={"unmet_criteria": unmet_criteria},
+                suggestions=[
+                    f"Mark criterion as met: {unmet_criteria[0].get('content', '')[:50]}"
+                    if unmet_criteria
+                    else "Mark all criteria as met"
+                ],
+            )
+
+        # All validations passed - complete the task
+        return self.complete_task(task_id)
+
+    # --- Task Research CRUD Operations ---
+
+    def list_task_research(self, task_id: str) -> DomainResult[Dict[str, Any]]:
+        """List all research items for a task."""
+        task_result = self.task_repo.get(task_id)
+        if task_result.is_failure:
+            return task_result
+
+        research = self._get_task_research(task_id)
+        return DomainSuccess.create(data={"task_id": task_id, "research": research})
+
+    def get_task_research(
+        self, task_id: str, research_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Get a single research item."""
+        task_result = self.task_repo.get(task_id)
+        if task_result.is_failure:
+            return task_result
+
+        entity_result = self.memory_entity_repo.get(research_id)
+        if entity_result.is_failure:
+            return DomainError.not_found("Research item", research_id)
+
+        entity = entity_result.data
+        observations = entity.observations
+        content = observations[0] if observations else ""
+        research_type = entity.metadata.get("research_type", "findings")
+
+        return DomainSuccess.create(data={
+            "id": entity.id,
+            "task_id": task_id,
+            "content": content,
+            "type": research_type,
+        })
+
+    def update_task_research(
+        self,
+        task_id: str,
+        research_id: str,
+        content: Optional[str] = None,
+        research_type: Optional[str] = None,
+    ) -> DomainResult[Dict[str, Any]]:
+        """Update a research item."""
+        current = self.get_task_research(task_id, research_id)
+        if current.is_failure:
+            return current
+
+        updates: Dict[str, Any] = {}
+        if content is not None:
+            updates["observations"] = [content]
+        if research_type is not None:
+            entity_result = self.memory_entity_repo.get(research_id)
+            if entity_result.is_success:
+                metadata = entity_result.data.metadata or {}
+                metadata["research_type"] = research_type
+                updates["metadata"] = metadata
+
+        if not updates:
+            return current
+
+        update_result = self.memory_entity_repo.update(research_id, updates)
+        if update_result.is_failure:
+            return update_result
+
+        return self.get_task_research(task_id, research_id)
+
+    def delete_task_research(
+        self, task_id: str, research_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Delete a research item."""
+        current = self.get_task_research(task_id, research_id)
+        if current.is_failure:
+            return current
+
+        delete_result = self.memory_entity_repo.delete(research_id)
+        if delete_result.is_failure:
+            return delete_result
+
+        return DomainSuccess.create(data={
+            "deleted": True,
+            "research_id": research_id,
+            "task_id": task_id,
+        })
+
+    def reorder_task_research(
+        self, task_id: str, research_id: str, new_order: int
+    ) -> DomainResult[Dict[str, Any]]:
+        """Change research item order."""
+        current = self.get_task_research(task_id, research_id)
+        if current.is_failure:
+            return current
+
+        assoc_result = self.memory_association_repo.get_by_entity(research_id)
+        if assoc_result.is_failure:
+            return assoc_result
+
+        update_result = self.memory_association_repo.update(
+            assoc_result.data.id, {"order_index": new_order}
+        )
+        if update_result.is_failure:
+            return update_result
+
+        return self.get_task_research(task_id, research_id)
+
+    # --- Task Implementation Notes CRUD Operations ---
+
+    def list_implementation_notes(
+        self, task_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """List all implementation notes for a task."""
+        task_result = self.task_repo.get(task_id)
+        if task_result.is_failure:
+            return task_result
+
+        notes = self._get_task_notes(task_id)
+        return DomainSuccess.create(data={"task_id": task_id, "notes": notes})
+
+    def get_implementation_note(
+        self, task_id: str, note_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Get a single implementation note."""
+        task_result = self.task_repo.get(task_id)
+        if task_result.is_failure:
+            return task_result
+
+        entity_result = self.memory_entity_repo.get(note_id)
+        if entity_result.is_failure:
+            return DomainError.not_found("Implementation note", note_id)
+
+        entity = entity_result.data
+        observations = entity.observations
+        content = observations[0] if observations else ""
+
+        return DomainSuccess.create(data={
+            "id": entity.id,
+            "task_id": task_id,
+            "content": content,
+        })
+
+    def update_implementation_note(
+        self, task_id: str, note_id: str, content: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Update an implementation note."""
+        current = self.get_implementation_note(task_id, note_id)
+        if current.is_failure:
+            return current
+
+        update_result = self.memory_entity_repo.update(
+            note_id, {"observations": [content]}
+        )
+        if update_result.is_failure:
+            return update_result
+
+        return self.get_implementation_note(task_id, note_id)
+
+    def delete_implementation_note(
+        self, task_id: str, note_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Delete an implementation note."""
+        current = self.get_implementation_note(task_id, note_id)
+        if current.is_failure:
+            return current
+
+        delete_result = self.memory_entity_repo.delete(note_id)
+        if delete_result.is_failure:
+            return delete_result
+
+        return DomainSuccess.create(data={
+            "deleted": True,
+            "note_id": note_id,
+            "task_id": task_id,
+        })
+
+    def reorder_implementation_notes(
+        self, task_id: str, note_id: str, new_order: int
+    ) -> DomainResult[Dict[str, Any]]:
+        """Change implementation note order."""
+        current = self.get_implementation_note(task_id, note_id)
+        if current.is_failure:
+            return current
+
+        assoc_result = self.memory_association_repo.get_by_entity(note_id)
+        if assoc_result.is_failure:
+            return assoc_result
+
+        update_result = self.memory_association_repo.update(
+            assoc_result.data.id, {"order_index": new_order}
+        )
+        if update_result.is_failure:
+            return update_result
+
+        return self.get_implementation_note(task_id, note_id)
+
+    # --- Task Acceptance Criteria CRUD Operations ---
+
+    def list_acceptance_criteria(
+        self, task_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """List all acceptance criteria for a task."""
+        task_result = self.task_repo.get(task_id)
+        if task_result.is_failure:
+            return task_result
+
+        criteria = self._get_task_criteria(task_id)
+        return DomainSuccess.create(data={
+            "task_id": task_id,
+            "criteria": criteria,
+        })
+
+    def get_acceptance_criterion(
+        self, task_id: str, criterion_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Get a single acceptance criterion."""
+        task_result = self.task_repo.get(task_id)
+        if task_result.is_failure:
+            return task_result
+
+        entity_result = self.memory_entity_repo.get(criterion_id)
+        if entity_result.is_failure:
+            return DomainError.not_found("Acceptance criterion", criterion_id)
+
+        entity = entity_result.data
+        observations = entity.observations
+        content = observations[0] if observations else ""
+        is_met = entity.metadata.get("is_met", False)
+
+        return DomainSuccess.create(data={
+            "id": entity.id,
+            "task_id": task_id,
+            "content": content,
+            "is_met": is_met,
+        })
+
+    def update_acceptance_criterion(
+        self, task_id: str, criterion_id: str, content: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Update an acceptance criterion description."""
+        current = self.get_acceptance_criterion(task_id, criterion_id)
+        if current.is_failure:
+            return current
+
+        update_result = self.memory_entity_repo.update(
+            criterion_id, {"observations": [content]}
+        )
+        if update_result.is_failure:
+            return update_result
+
+        return self.get_acceptance_criterion(task_id, criterion_id)
+
+    def delete_acceptance_criterion(
+        self, task_id: str, criterion_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Delete an acceptance criterion."""
+        current = self.get_acceptance_criterion(task_id, criterion_id)
+        if current.is_failure:
+            return current
+
+        delete_result = self.memory_entity_repo.delete(criterion_id)
+        if delete_result.is_failure:
+            return delete_result
+
+        return DomainSuccess.create(data={
+            "deleted": True,
+            "criterion_id": criterion_id,
+            "task_id": task_id,
+        })
+
+    def reorder_acceptance_criteria(
+        self, task_id: str, criterion_id: str, new_order: int
+    ) -> DomainResult[Dict[str, Any]]:
+        """Change acceptance criterion order."""
+        current = self.get_acceptance_criterion(task_id, criterion_id)
+        if current.is_failure:
+            return current
+
+        assoc_result = self.memory_association_repo.get_by_entity(criterion_id)
+        if assoc_result.is_failure:
+            return assoc_result
+
+        update_result = self.memory_association_repo.update(
+            assoc_result.data.id, {"order_index": new_order}
+        )
+        if update_result.is_failure:
+            return update_result
+
+        return self.get_acceptance_criterion(task_id, criterion_id)
+
+    # --- Task Testing Strategy CRUD Operations ---
+
+    def list_testing_steps(self, task_id: str) -> DomainResult[Dict[str, Any]]:
+        """List all testing steps for a task."""
+        task_result = self.task_repo.get(task_id)
+        if task_result.is_failure:
+            return task_result
+
+        steps = self._get_task_testing_steps(task_id)
+        return DomainSuccess.create(data={"task_id": task_id, "steps": steps})
+
+    def get_testing_step(
+        self, task_id: str, step_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Get a single testing step."""
+        task_result = self.task_repo.get(task_id)
+        if task_result.is_failure:
+            return task_result
+
+        entity_result = self.memory_entity_repo.get(step_id)
+        if entity_result.is_failure:
+            return DomainError.not_found("Testing step", step_id)
+
+        entity = entity_result.data
+        observations = entity.observations
+        content = observations[0] if observations else ""
+        step_type = entity.metadata.get("step_type", "verify")
+        test_status = entity.metadata.get("test_status", "pending")
+
+        return DomainSuccess.create(data={
+            "id": entity.id,
+            "task_id": task_id,
+            "content": content,
+            "step_type": step_type,
+            "test_status": test_status,
+        })
+
+    def update_testing_step(
+        self,
+        task_id: str,
+        step_id: str,
+        content: Optional[str] = None,
+        step_type: Optional[str] = None,
+    ) -> DomainResult[Dict[str, Any]]:
+        """Update a testing step."""
+        current = self.get_testing_step(task_id, step_id)
+        if current.is_failure:
+            return current
+
+        updates: Dict[str, Any] = {}
+        if content is not None:
+            updates["observations"] = [content]
+
+        if step_type is not None:
+            entity_result = self.memory_entity_repo.get(step_id)
+            if entity_result.is_success:
+                metadata = entity_result.data.metadata or {}
+                metadata["step_type"] = step_type
+                updates["metadata"] = metadata
+
+        if not updates:
+            return current
+
+        update_result = self.memory_entity_repo.update(step_id, updates)
+        if update_result.is_failure:
+            return update_result
+
+        return self.get_testing_step(task_id, step_id)
+
+    def delete_testing_step(
+        self, task_id: str, step_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Delete a testing step."""
+        current = self.get_testing_step(task_id, step_id)
+        if current.is_failure:
+            return current
+
+        delete_result = self.memory_entity_repo.delete(step_id)
+        if delete_result.is_failure:
+            return delete_result
+
+        return DomainSuccess.create(data={
+            "deleted": True,
+            "step_id": step_id,
+            "task_id": task_id,
+        })
+
+    def mark_testing_step_passed(
+        self, task_id: str, step_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Mark a testing step as passed."""
+        return self._update_testing_step_status(task_id, step_id, "passed")
+
+    def mark_testing_step_failed(
+        self, task_id: str, step_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Mark a testing step as failed."""
+        return self._update_testing_step_status(task_id, step_id, "failed")
+
+    def mark_testing_step_skipped(
+        self, task_id: str, step_id: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Mark a testing step as skipped."""
+        return self._update_testing_step_status(task_id, step_id, "skipped")
+
+    def _update_testing_step_status(
+        self, task_id: str, step_id: str, status: str
+    ) -> DomainResult[Dict[str, Any]]:
+        """Update testing step status (internal helper)."""
+        current = self.get_testing_step(task_id, step_id)
+        if current.is_failure:
+            return current
+
+        entity_result = self.memory_entity_repo.get(step_id)
+        if entity_result.is_failure:
+            return entity_result
+
+        metadata = entity_result.data.metadata or {}
+        metadata["test_status"] = status
+
+        update_result = self.memory_entity_repo.update(
+            step_id, {"metadata": metadata}
+        )
+        if update_result.is_failure:
+            return update_result
+
+        return self.get_testing_step(task_id, step_id)
+
+    def reorder_testing_steps(
+        self, task_id: str, step_id: str, new_order: int
+    ) -> DomainResult[Dict[str, Any]]:
+        """Change testing step order."""
+        current = self.get_testing_step(task_id, step_id)
+        if current.is_failure:
+            return current
+
+        assoc_result = self.memory_association_repo.get_by_entity(step_id)
+        if assoc_result.is_failure:
+            return assoc_result
+
+        update_result = self.memory_association_repo.update(
+            assoc_result.data.id, {"order_index": new_order}
+        )
+        if update_result.is_failure:
+            return update_result
+
+        return self.get_testing_step(task_id, step_id)

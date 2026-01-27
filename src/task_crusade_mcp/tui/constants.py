@@ -43,8 +43,9 @@ RICH_SEMANTIC_COLORS: dict[str, str] = {
 }
 
 # Priority indicators using arrow symbols for DataTable rendering
-# High priority: ↑ (upward arrow), Medium: → (rightward arrow), Low: ↓ (downward arrow)
+# Critical: ⚡ (lightning), High: ↑ (upward), Medium: → (rightward), Low: ↓ (downward)
 PRIORITY_ICONS: dict[str, str] = {
+    "critical": "⚡",
     "high": "↑",
     "medium": "→",
     "low": "↓",
@@ -53,6 +54,7 @@ PRIORITY_ICONS: dict[str, str] = {
 # Priority colors for Rich Text styling (used in DataTable rendering)
 # Maps priority levels to Rich color names for colored text rendering
 PRIORITY_COLORS: dict[str, str] = {
+    "critical": "bold red",
     "high": "red",
     "medium": "yellow",
     "low": "dim",
@@ -68,6 +70,30 @@ STATUS_CYCLE: dict[str, str] = {
     "pending": "in-progress",
     "in-progress": "done",
     "done": "pending",
+}
+
+# Priority cycle for p key toggle behavior
+PRIORITY_CYCLE: dict[str, str] = {
+    "low": "medium",
+    "medium": "high",
+    "high": "critical",
+    "critical": "low",
+}
+
+# Status values for direct keybindings (1-4)
+STATUS_VALUES: dict[str, str] = {
+    "1": "pending",
+    "2": "in-progress",
+    "3": "done",
+    "4": "blocked",
+}
+
+# Priority values for direct keybindings (!/@ /#/$)
+PRIORITY_VALUES: dict[str, str] = {
+    "!": "critical",
+    "@": "high",
+    "#": "medium",
+    "$": "low",
 }
 
 # Status filter options for task list filtering

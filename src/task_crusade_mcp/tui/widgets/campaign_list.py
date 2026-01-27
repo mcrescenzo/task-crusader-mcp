@@ -131,6 +131,24 @@ class CampaignListWidget(ListView):
             self.query = query
             self.is_active = is_active
 
+    class NewCampaignRequested(Message):
+        """Message emitted when user requests to create a new campaign."""
+
+        pass
+
+    class CampaignCreated(Message):
+        """Message emitted when a new campaign is created.
+
+        Attributes:
+            campaign_id: UUID of the new campaign.
+            campaign_data: Dictionary containing the new campaign's data.
+        """
+
+        def __init__(self, campaign_id: str, campaign_data: dict) -> None:
+            super().__init__()
+            self.campaign_id = campaign_id
+            self.campaign_data = campaign_data
+
     BINDINGS = [
         ("j", "cursor_down", "Down"),
         ("k", "cursor_up", "Up"),
@@ -140,6 +158,8 @@ class CampaignListWidget(ListView):
         ("slash", "open_search", "Search"),
         ("ctrl+l", "clear_search", "Clear Search"),
         ("d", "delete_campaign", "Delete"),
+        ("N", "new_campaign", "New Campaign"),
+        ("S", "cycle_sort", "Sort"),
     ]
 
     def __init__(
@@ -178,6 +198,15 @@ class CampaignListWidget(ListView):
 
         # Loading state
         self._is_loading: bool = False
+
+        # Sort state
+        self._sort_mode: int = 0
+        self._sort_modes: list[tuple[str, str]] = [
+            ("name", "Name"),
+            ("progress", "Progress"),
+            ("task_count", "Task Count"),
+            ("priority", "Priority"),
+        ]
 
     @property
     def status_filter(self) -> str:
@@ -273,7 +302,47 @@ class CampaignListWidget(ListView):
             query_lower = self._search_query.lower()
             filtered = [c for c in filtered if query_lower in c.get("name", "").lower()]
 
+        # Apply sorting
+        filtered = self._apply_sort(filtered)
+
         return filtered
+
+    def _apply_sort(self, campaigns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Apply current sort mode to campaigns."""
+        if not campaigns:
+            return campaigns
+
+        sort_key, _ = self._sort_modes[self._sort_mode]
+
+        if sort_key == "name":
+            return sorted(
+                campaigns,
+                key=lambda c: c.get("name", "").lower(),
+            )
+        elif sort_key == "progress":
+            # Sort by completion percentage (done/total), descending
+            def progress_key(c: dict) -> float:
+                total = c.get("task_count", 0)
+                done = c.get("done_count", 0)
+                return done / total if total > 0 else 0
+
+            return sorted(campaigns, key=progress_key, reverse=True)
+        elif sort_key == "task_count":
+            # Sort by task count, descending
+            return sorted(
+                campaigns,
+                key=lambda c: c.get("task_count", 0),
+                reverse=True,
+            )
+        elif sort_key == "priority":
+            # Sort by priority: high > medium > low
+            priority_order = {"high": 0, "medium": 1, "low": 2}
+            return sorted(
+                campaigns,
+                key=lambda c: priority_order.get(c.get("priority", "medium"), 1),
+            )
+
+        return campaigns
 
     async def _refresh_display(self) -> None:
         """Refresh display after filter changes."""
@@ -439,3 +508,16 @@ class CampaignListWidget(ListView):
         except Exception as e:
             logger.error(f"Failed to delete campaign: {e}")
             self.notify(f"Delete failed: {e}", severity="error")
+
+    def action_new_campaign(self) -> None:
+        """Request creation of a new campaign."""
+        self.post_message(self.NewCampaignRequested())
+
+    async def action_cycle_sort(self) -> None:
+        """Cycle through sort modes."""
+        self._sort_mode = (self._sort_mode + 1) % len(self._sort_modes)
+        _, sort_label = self._sort_modes[self._sort_mode]
+
+        await self._refresh_display()
+
+        self.notify(f"Sort: {sort_label}", severity="information", timeout=1.5)

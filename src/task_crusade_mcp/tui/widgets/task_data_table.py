@@ -20,12 +20,14 @@ from task_crusade_mcp.tui.constants import (
     ACTIONABLE_COLOR,
     ACTIONABLE_ICON,
     PRIORITY_COLORS,
+    PRIORITY_CYCLE,
     PRIORITY_ICONS,
     RICH_STATUS_COLORS,
+    STATUS_CYCLE,
     STATUS_FILTER_OPTIONS,
     STATUS_ICONS,
 )
-from task_crusade_mcp.tui.exceptions import DataFetchError
+from task_crusade_mcp.tui.exceptions import DataFetchError, DataUpdateError
 from task_crusade_mcp.tui.services.config_service import TUIConfigService
 from task_crusade_mcp.tui.services.data_service import TUIDataService
 
@@ -96,6 +98,56 @@ class TaskDataTable(DataTable):
             self.filter_value = filter_value
             self.filter_label = filter_label
 
+    class TaskStatusChanged(Message):
+        """Message emitted when a task's status is changed.
+
+        Attributes:
+            task_id: UUID of the task.
+            new_status: The new status value.
+        """
+
+        def __init__(self, task_id: str, new_status: str) -> None:
+            super().__init__()
+            self.task_id = task_id
+            self.new_status = new_status
+
+    class TaskPriorityChanged(Message):
+        """Message emitted when a task's priority is changed.
+
+        Attributes:
+            task_id: UUID of the task.
+            new_priority: The new priority value.
+        """
+
+        def __init__(self, task_id: str, new_priority: str) -> None:
+            super().__init__()
+            self.task_id = task_id
+            self.new_priority = new_priority
+
+    class TaskCreated(Message):
+        """Message emitted when a new task is created.
+
+        Attributes:
+            task_id: UUID of the new task.
+            task_data: Dictionary containing the new task's data.
+        """
+
+        def __init__(self, task_id: str, task_data: dict[str, Any]) -> None:
+            super().__init__()
+            self.task_id = task_id
+            self.task_data = task_data
+
+    class NewTaskRequested(Message):
+        """Message emitted when user requests to create a new task.
+
+        Attributes:
+            campaign_id: UUID of the campaign to create the task in.
+        """
+
+        def __init__(self, campaign_id: str) -> None:
+            super().__init__()
+            self.campaign_id = campaign_id
+
     BINDINGS = [
         ("j", "cursor_down", "Down"),
         ("k", "cursor_up", "Up"),
@@ -110,6 +162,27 @@ class TaskDataTable(DataTable):
         ("space", "toggle_selection", "Toggle Selection"),
         ("shift+a", "select_all_visible", "Select All"),
         ("b", "open_bulk_actions", "Bulk Actions"),
+        # Quick status actions
+        ("s", "cycle_status", "Cycle Status"),
+        ("1", "set_status_pending", "Pending"),
+        ("2", "set_status_in_progress", "In Progress"),
+        ("3", "set_status_done", "Done"),
+        ("4", "set_status_blocked", "Blocked"),
+        # Quick priority actions
+        ("p", "cycle_priority", "Cycle Priority"),
+        ("exclamation_mark", "set_priority_critical", "Critical"),
+        ("at", "set_priority_high", "High"),
+        ("hash", "set_priority_medium", "Medium"),
+        ("dollar_sign", "set_priority_low", "Low"),
+        # Copy shortcuts
+        ("y", "copy_task_id", "Copy ID"),
+        ("Y", "copy_task_details", "Copy Details"),
+        # Create new task
+        ("n", "new_task", "New Task"),
+        # Sorting
+        ("S", "cycle_sort", "Sort"),
+        # Dependencies
+        ("D", "show_dependencies", "Dependencies"),
     ]
 
     def __init__(
@@ -161,6 +234,15 @@ class TaskDataTable(DataTable):
         # Selection mode state
         self._selection_mode: bool = False
         self._selected_keys: set[str] = set()
+
+        # Sort state
+        self._sort_mode: int = 0  # Index into SORT_MODES
+        self._sort_modes: list[tuple[str, str]] = [
+            ("priority", "Priority"),
+            ("status", "Status"),
+            ("created", "Created"),
+            ("title", "Title"),
+        ]
 
     @property
     def status_filter(self) -> str:
@@ -265,8 +347,18 @@ class TaskDataTable(DataTable):
         self.add_row(*empty_row, key="empty")
 
     def _enrich_dependency_details(self) -> None:
-        """Enrich tasks with dependency details for display."""
+        """Enrich tasks with dependency details for display.
+
+        Adds two lists to each task:
+        - dependency_details: Tasks that this task depends on (blocked by)
+        - blocking_details: Tasks that depend on this task (blocking)
+        """
         task_map = {task["id"]: task for task in self._all_tasks}
+
+        # Build reverse dependency map (task_id -> list of tasks that depend on it)
+        blocking_map: dict[str, list[dict[str, Any]]] = {
+            task["id"]: [] for task in self._all_tasks
+        }
 
         for task in self._all_tasks:
             dependencies = task.get("dependencies", [])
@@ -278,19 +370,35 @@ class TaskDataTable(DataTable):
                         dep_details.append(
                             {
                                 "id": dep_id,
+                                "title": dep_task.get("title", "Unknown"),
                                 "priority_order": dep_task.get("priority_order", "?"),
                                 "status": dep_task.get("status", "unknown"),
                             }
                         )
+                        # Add to reverse map
+                        if dep_id in blocking_map:
+                            blocking_map[dep_id].append(
+                                {
+                                    "id": task["id"],
+                                    "title": task.get("title", "Unknown"),
+                                    "priority_order": task.get("priority_order", "?"),
+                                    "status": task.get("status", "unknown"),
+                                }
+                            )
                     else:
                         dep_details.append(
                             {
                                 "id": dep_id,
+                                "title": "Unknown",
                                 "priority_order": "?",
                                 "status": "unknown",
                             }
                         )
                 task["dependency_details"] = dep_details
+
+        # Add blocking details to each task
+        for task in self._all_tasks:
+            task["blocking_details"] = blocking_map.get(task["id"], [])
 
     def _apply_status_filter(self, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Apply status-based filtering."""
@@ -330,9 +438,53 @@ class TaskDataTable(DataTable):
         filtered = self._apply_status_filter(filtered)
         filtered = self._apply_search_filter(filtered)
         filtered = self._apply_actionable_filter(filtered)
+        filtered = self._apply_sort(filtered)
 
         self._filtered_tasks = filtered
         await self._refresh_display(filtered)
+
+    def _apply_sort(self, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Apply current sort mode to tasks."""
+        if not tasks:
+            return tasks
+
+        sort_key, _ = self._sort_modes[self._sort_mode]
+
+        if sort_key == "priority":
+            # Sort by priority order: critical > high > medium > low
+            priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+            return sorted(
+                tasks,
+                key=lambda t: priority_order.get(t.get("priority", "medium"), 2),
+            )
+        elif sort_key == "status":
+            # Sort by status order: pending > in-progress > blocked > done
+            status_order = {
+                "pending": 0,
+                "in-progress": 1,
+                "blocked": 2,
+                "done": 3,
+                "cancelled": 4,
+            }
+            return sorted(
+                tasks,
+                key=lambda t: status_order.get(t.get("status", "pending"), 0),
+            )
+        elif sort_key == "created":
+            # Sort by creation date, newest first
+            return sorted(
+                tasks,
+                key=lambda t: t.get("created_at", ""),
+                reverse=True,
+            )
+        elif sort_key == "title":
+            # Sort alphabetically by title
+            return sorted(
+                tasks,
+                key=lambda t: t.get("title", "").lower(),
+            )
+
+        return tasks
 
     def _has_no_unmet_dependencies(self, task: dict[str, Any]) -> bool:
         """Check if a task has no unmet dependencies."""
@@ -395,6 +547,14 @@ class TaskDataTable(DataTable):
                 continue
 
         return task_ids
+
+    def get_selected_task(self) -> Optional[dict[str, Any]]:
+        """Get the task data for the currently selected row."""
+        task_id = self.get_selected_task_id()
+        if task_id is None:
+            return None
+
+        return next((t for t in self._all_tasks if t.get("id") == task_id), None)
 
     async def refresh_tasks(self) -> None:
         """Refresh the task list by reloading data for the current campaign."""
@@ -745,3 +905,228 @@ class TaskDataTable(DataTable):
         except Exception as e:
             logger.exception(f"Bulk operation failed: {e}")
             self.notify(f"Bulk operation failed: {e}", severity="error")
+
+    # =========================================================================
+    # Quick Status Actions (Phase 1.1)
+    # =========================================================================
+
+    async def action_cycle_status(self) -> None:
+        """Cycle the status of the currently selected task."""
+        task = self.get_selected_task()
+        if task is None:
+            return
+
+        task_id = task.get("id")
+        current_status = task.get("status", "pending")
+        next_status = STATUS_CYCLE.get(current_status, "pending")
+
+        await self._update_task_status(task_id, next_status)
+
+    async def action_set_status_pending(self) -> None:
+        """Set the selected task status to pending."""
+        await self._set_task_status("pending")
+
+    async def action_set_status_in_progress(self) -> None:
+        """Set the selected task status to in-progress."""
+        await self._set_task_status("in-progress")
+
+    async def action_set_status_done(self) -> None:
+        """Set the selected task status to done."""
+        await self._set_task_status("done")
+
+    async def action_set_status_blocked(self) -> None:
+        """Set the selected task status to blocked."""
+        await self._set_task_status("blocked")
+
+    async def _set_task_status(self, status: str) -> None:
+        """Set the selected task to a specific status."""
+        task_id = self.get_selected_task_id()
+        if task_id is None:
+            return
+
+        await self._update_task_status(task_id, status)
+
+    async def _update_task_status(self, task_id: str, new_status: str) -> None:
+        """Update task status and refresh display."""
+        try:
+            await self.data_service.update_task_status(task_id, new_status)
+
+            # Update local task data for immediate UI feedback
+            for task in self._all_tasks:
+                if task.get("id") == task_id:
+                    task["status"] = new_status
+                    break
+
+            # Refresh display without full reload
+            await self._apply_filters()
+
+            # Restore cursor position
+            self._restore_cursor_to_task(task_id)
+
+            self.notify(f"Status: {new_status}", severity="information", timeout=1.5)
+            self.post_message(self.TaskStatusChanged(task_id, new_status))
+
+        except DataUpdateError as e:
+            logger.error(f"Failed to update task status: {e}")
+            self.notify(f"Status update failed: {e}", severity="error")
+
+    def _restore_cursor_to_task(self, task_id: str) -> None:
+        """Restore cursor to a specific task after refresh."""
+        try:
+            for row_index, row in enumerate(self.ordered_rows):
+                if row.key.value == task_id:
+                    self.move_cursor(row=row_index)
+                    return
+        except (IndexError, AttributeError):
+            pass
+
+    # =========================================================================
+    # Quick Priority Actions (Phase 1.2)
+    # =========================================================================
+
+    async def action_cycle_priority(self) -> None:
+        """Cycle the priority of the currently selected task."""
+        task = self.get_selected_task()
+        if task is None:
+            return
+
+        task_id = task.get("id")
+        current_priority = task.get("priority", "medium")
+        next_priority = PRIORITY_CYCLE.get(current_priority, "medium")
+
+        await self._update_task_priority(task_id, next_priority)
+
+    async def action_set_priority_critical(self) -> None:
+        """Set the selected task priority to critical."""
+        await self._set_task_priority("critical")
+
+    async def action_set_priority_high(self) -> None:
+        """Set the selected task priority to high."""
+        await self._set_task_priority("high")
+
+    async def action_set_priority_medium(self) -> None:
+        """Set the selected task priority to medium."""
+        await self._set_task_priority("medium")
+
+    async def action_set_priority_low(self) -> None:
+        """Set the selected task priority to low."""
+        await self._set_task_priority("low")
+
+    async def _set_task_priority(self, priority: str) -> None:
+        """Set the selected task to a specific priority."""
+        task_id = self.get_selected_task_id()
+        if task_id is None:
+            return
+
+        await self._update_task_priority(task_id, priority)
+
+    async def _update_task_priority(self, task_id: str, new_priority: str) -> None:
+        """Update task priority and refresh display."""
+        try:
+            await self.data_service.update_task_priority(task_id, new_priority)
+
+            # Update local task data for immediate UI feedback
+            for task in self._all_tasks:
+                if task.get("id") == task_id:
+                    task["priority"] = new_priority
+                    break
+
+            # Refresh display without full reload
+            await self._apply_filters()
+
+            # Restore cursor position
+            self._restore_cursor_to_task(task_id)
+
+            self.notify(f"Priority: {new_priority}", severity="information", timeout=1.5)
+            self.post_message(self.TaskPriorityChanged(task_id, new_priority))
+
+        except DataUpdateError as e:
+            logger.error(f"Failed to update task priority: {e}")
+            self.notify(f"Priority update failed: {e}", severity="error")
+
+    # =========================================================================
+    # Copy Shortcuts (Phase 1.3)
+    # =========================================================================
+
+    def action_copy_task_id(self) -> None:
+        """Copy the selected task's ID to clipboard."""
+        task_id = self.get_selected_task_id()
+        if task_id is None:
+            return
+
+        self.app.copy_to_clipboard(task_id)
+        self.notify("Task ID copied", severity="information", timeout=1.5)
+
+    def action_copy_task_details(self) -> None:
+        """Copy the selected task's full details to clipboard."""
+        task = self.get_selected_task()
+        if task is None:
+            return
+
+        # Format task details
+        details_lines = [
+            f"Title: {task.get('title', 'Unknown')}",
+            f"ID: {task.get('id', 'Unknown')}",
+            f"Status: {task.get('status', 'Unknown')}",
+            f"Priority: {task.get('priority', 'Unknown')}",
+        ]
+
+        description = task.get("description", "")
+        if description:
+            details_lines.append(f"Description: {description}")
+
+        details = "\n".join(details_lines)
+        self.app.copy_to_clipboard(details)
+        self.notify("Task details copied", severity="information", timeout=1.5)
+
+    # =========================================================================
+    # Sorting (Phase 4.1)
+    # =========================================================================
+
+    async def action_cycle_sort(self) -> None:
+        """Cycle through sort modes."""
+        self._sort_mode = (self._sort_mode + 1) % len(self._sort_modes)
+        sort_key, sort_label = self._sort_modes[self._sort_mode]
+
+        await self._apply_filters()
+
+        self.notify(f"Sort: {sort_label}", severity="information", timeout=1.5)
+
+    # =========================================================================
+    # New Task Creation (Phase 3.1)
+    # =========================================================================
+
+    def action_new_task(self) -> None:
+        """Request creation of a new task in the current campaign."""
+        if self._campaign_id is None:
+            self.notify("Select a campaign first", severity="warning")
+            return
+
+        self.post_message(self.NewTaskRequested(self._campaign_id))
+
+    # =========================================================================
+    # Dependency Visualization (Phase 7.1)
+    # =========================================================================
+
+    async def action_show_dependencies(self) -> None:
+        """Show dependency modal for the selected task."""
+        task = self.get_selected_task()
+        if task is None:
+            return
+
+        task_id = task.get("id")
+        task_title = task.get("title", "Unknown")
+
+        # Get dependency details
+        blocked_by = task.get("dependency_details", [])
+        blocking = task.get("blocking_details", [])
+
+        from task_crusade_mcp.tui.widgets.dependency_modal import DependencyModal
+
+        modal = DependencyModal(
+            task_id=task_id,
+            task_title=task_title,
+            blocked_by=blocked_by,
+            blocking=blocking,
+        )
+        await self.app.push_screen(modal)

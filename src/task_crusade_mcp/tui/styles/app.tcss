@@ -379,6 +379,14 @@ TaskDetailWidget {
     background: $primary-darken-2;
 }
 
+.criteria-item:hover {
+    background: $primary-darken-3;
+}
+
+.criteria-selected:hover {
+    background: $primary-darken-1;
+}
+
 #criteria-progress {
     color: $text-muted;
     padding: 1 0 0 0;

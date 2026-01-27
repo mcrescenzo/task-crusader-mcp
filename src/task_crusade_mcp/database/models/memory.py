@@ -201,7 +201,7 @@ class MemoryTaskAssociation(Base):
 
     id: str = Column(String(36), primary_key=True, default=generate_id)
     memory_entity_id: str = Column(
-        String(36), ForeignKey("memory_entities.id"), nullable=False, index=True
+        String(36), ForeignKey("memory_entities.id", ondelete="CASCADE"), nullable=False, index=True
     )
     task_id: Optional[str] = Column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True)
     campaign_id: Optional[str] = Column(

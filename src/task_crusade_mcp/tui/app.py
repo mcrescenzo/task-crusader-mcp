@@ -81,11 +81,8 @@ class CrusaderTUI(App):
         )
         yield Footer()
 
-    def action_help(self) -> None:
-        """Show help information."""
-        self.notify(
-            "Tab: Switch panes | j/k: Navigate | f: Filter | /: Search | "
-            "Ctrl+L: Clear Search | d: Delete | v: Multi-select | r: Refresh | q: Quit",
-            title="Keyboard Shortcuts",
-            timeout=10,
-        )
+    async def action_help(self) -> None:
+        """Show help modal with keyboard shortcuts."""
+        from task_crusade_mcp.tui.widgets.help_modal import HelpModal
+
+        await self.push_screen(HelpModal())
