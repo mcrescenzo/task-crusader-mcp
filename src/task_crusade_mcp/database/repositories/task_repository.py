@@ -208,8 +208,10 @@ class TaskRepository:
                     elif hasattr(task, field) and field not in ("id", "created_at"):
                         setattr(task, field, value)
 
-                # Handle status change to done
-                if updates.get("status") == "done" and not task.completed_at:
+                # Handle status change to terminal states (done or cancelled)
+                terminal_task_states = {"done", "cancelled"}
+                new_status = updates.get("status")
+                if new_status in terminal_task_states and not task.completed_at:
                     task.completed_at = datetime.now(timezone.utc)
 
                 session.flush()

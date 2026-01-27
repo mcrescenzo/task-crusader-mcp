@@ -162,6 +162,22 @@ CampaignListWidget > ListItem.--highlight {
     background: $accent;
 }
 
+CampaignListWidget > ListItem.--highlight > Label {
+    background: $accent;
+}
+
+CampaignListItem {
+    height: auto;
+}
+
+CampaignListItem.--highlight {
+    background: $accent;
+}
+
+CampaignListItem.--highlight > Label {
+    background: $accent;
+}
+
 .campaign-name {
     text-style: bold;
     color: $text;

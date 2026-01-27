@@ -88,13 +88,12 @@ class BulkDeleteModal(ModalScreen):
                     title = task.get("title", "Unnamed Task")
                     status = task.get("status", "pending")
                     status_icon = STATUS_ICONS.get(status, "○")
-                    priority_order = task.get("priority_order", "?")
 
                     if len(title) > 35:
                         title = title[:32] + "..."
 
                     yield Static(
-                        f"• {status_icon} #{priority_order} {title}",
+                        f"• {status_icon} {title}",
                         classes="modal-warning-item",
                     )
 

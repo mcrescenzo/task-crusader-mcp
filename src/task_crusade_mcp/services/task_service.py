@@ -5,8 +5,11 @@ Provides high-level task operations with proper error handling
 and orchestration of repository calls.
 """
 
+from __future__ import annotations
+
+import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from task_crusade_mcp.database.repositories import (
     CampaignRepository,
@@ -20,6 +23,11 @@ from task_crusade_mcp.domain.entities.result_types import (
     DomainResult,
     DomainSuccess,
 )
+
+if TYPE_CHECKING:
+    from task_crusade_mcp.services.hint_generator import HintGenerator
+
+logger = logging.getLogger(__name__)
 
 
 class TaskService:
@@ -37,13 +45,46 @@ class TaskService:
         memory_session_repo: MemorySessionRepository,
         memory_entity_repo: MemoryEntityRepository,
         memory_association_repo: MemoryAssociationRepository,
+        hint_generator: Optional["HintGenerator"] = None,
     ):
-        """Initialize service with repositories."""
+        """Initialize service with repositories and hint generator."""
         self.task_repo = task_repo
         self.campaign_repo = campaign_repo
         self.memory_session_repo = memory_session_repo
         self.memory_entity_repo = memory_entity_repo
         self.memory_association_repo = memory_association_repo
+        self._hint_generator = hint_generator
+
+    # --- Helper Methods ---
+
+    def _validate_result_data(
+        self,
+        result: DomainResult[Any],
+        operation: str,
+    ) -> DomainResult[Any]:
+        """
+        Validate that a successful result has data.
+
+        Protects against None dereference when accessing result.data attributes.
+
+        Args:
+            result: The result to validate
+            operation: Description of the operation for error messages
+
+        Returns:
+            The original result if valid, or a DomainError if data is None
+        """
+        if result.is_failure:
+            return result
+
+        if result.data is None:
+            return DomainError.operation_failed(
+                operation=operation,
+                reason="Operation succeeded but returned no data",
+                suggestions=["Check database consistency", "Verify repository implementation"],
+            )
+
+        return result
 
     # --- CRUD Operations ---
 
@@ -80,6 +121,11 @@ class TaskService:
         Returns:
             DomainResult with created task data.
         """
+        # Normalize and validate title
+        title = title.strip() if title else ""
+        if not title:
+            return DomainError.validation_error("Task title cannot be empty or whitespace")
+
         # Verify campaign exists
         campaign_result = self.campaign_repo.get(campaign_id)
         if campaign_result.is_failure:
@@ -125,6 +171,20 @@ class TaskService:
                 if research_result.is_success:
                     research_results.append(research_result.data)
             task_data["research"] = research_results
+
+        # Generate hints if hint generator is available
+        if self._hint_generator:
+            criteria_details = task_data.get("acceptance_criteria_details", [])
+            has_criteria = len(criteria_details) > 0
+            hints = self._hint_generator.post_task_create(
+                task_id=task_dto.id,
+                task_title=task_dto.title,
+                campaign_id=campaign_id,
+                has_acceptance_criteria=has_criteria,
+                criteria_count=len(criteria_details),
+            )
+            hint_data = self._hint_generator.format_for_response(hints)
+            task_data.update(hint_data)
 
         return DomainSuccess.create(data=task_data)
 
@@ -183,14 +243,50 @@ class TaskService:
 
     def update_task(self, task_id: str, **updates: Any) -> DomainResult[Dict[str, Any]]:
         """Update a task."""
+        # Get old task state for status change detection
+        old_task_result = self.task_repo.get(task_id)
+        old_status = None
+        if old_task_result.is_success and old_task_result.data:
+            old_status = old_task_result.data.status
+
         result = self.task_repo.update(task_id, updates)
         if result.is_failure:
             return result
 
-        return DomainSuccess.create(data=result.data.to_dict())
+        task_data = result.data.to_dict()
+        new_status = task_data.get("status")
+
+        # Generate hints for status changes
+        if self._hint_generator and old_status and new_status and old_status != new_status:
+            # Get criteria counts for the hint
+            criteria = self._get_task_criteria(task_id)
+            criteria_count = len(criteria)
+            unmet_count = len([c for c in criteria if not c.get("is_met", False)])
+
+            hints = self._hint_generator.post_task_status_change(
+                task_id=task_id,
+                task_title=task_data.get("title", ""),
+                campaign_id=task_data.get("campaign_id", ""),
+                old_status=old_status,
+                new_status=new_status,
+                criteria_count=criteria_count,
+                unmet_criteria_count=unmet_count,
+            )
+            hint_data = self._hint_generator.format_for_response(hints)
+            task_data.update(hint_data)
+
+        return DomainSuccess.create(data=task_data)
 
     def delete_task(self, task_id: str) -> DomainResult[Dict[str, Any]]:
         """Delete a task and its associated memory entities."""
+        # First, get all memory associations for this task
+        assoc_result = self.memory_association_repo.list_by_task(task_id)
+        if assoc_result.is_success and assoc_result.data:
+            # Delete each memory entity (cascades to delete association)
+            for assoc in assoc_result.data:
+                self.memory_entity_repo.delete(assoc.memory_entity_id)
+
+        # Now safe to delete the task
         return self.task_repo.delete(task_id)
 
     def complete_task(self, task_id: str) -> DomainResult[Dict[str, Any]]:
@@ -203,6 +299,10 @@ class TaskService:
         result = self.task_repo.get(task_id)
         if result.is_failure:
             return result
+
+        task_dto = result.data
+        task_title = task_dto.title
+        campaign_id = task_dto.campaign_id
 
         # Get acceptance criteria
         criteria = self._get_task_criteria(task_id)
@@ -217,12 +317,32 @@ class TaskService:
                 suggestions=["Mark all acceptance criteria as met before completing the task"],
             )
 
-        # Update task status
-        return self.update_task(
+        # Update task status (don't use self.update_task to avoid double hints)
+        update_result = self.task_repo.update(
             task_id,
-            status="done",
-            completed_at=datetime.now(timezone.utc),
+            {"status": "done", "completed_at": datetime.now(timezone.utc)},
         )
+        if update_result.is_failure:
+            return update_result
+
+        task_data = update_result.data.to_dict()
+
+        # Generate completion hints
+        if self._hint_generator:
+            # Get campaign progress for context
+            progress_result = self.campaign_repo.get_progress_summary(campaign_id)
+            progress_data = progress_result.data if progress_result.is_success else None
+
+            hints = self._hint_generator.post_task_complete(
+                task_id=task_id,
+                task_title=task_title,
+                campaign_id=campaign_id,
+                campaign_progress=progress_data,
+            )
+            hint_data = self._hint_generator.format_for_response(hints)
+            task_data.update(hint_data)
+
+        return DomainSuccess.create(data=task_data)
 
     # --- Acceptance Criteria Operations ---
 
@@ -261,6 +381,9 @@ class TaskService:
                 "observations": [content],
                 "metadata": {"is_met": False},
             }
+        )
+        entity_result = self._validate_result_data(
+            entity_result, f"create acceptance criteria entity for task {task_id}"
         )
         if entity_result.is_failure:
             return entity_result
@@ -307,13 +430,44 @@ class TaskService:
         observations = entity.observations
         content = observations[0] if observations else ""
 
-        return DomainSuccess.create(
-            data={
-                "id": criteria_id,
-                "content": content,
-                "is_met": True,
-            }
-        )
+        result_data: Dict[str, Any] = {
+            "id": criteria_id,
+            "content": content,
+            "is_met": True,
+        }
+
+        # Generate hints if hint generator is available
+        if self._hint_generator:
+            # Get task info from association
+            assoc_result = self.memory_association_repo.get_by_entity(criteria_id)
+            if assoc_result.is_success and assoc_result.data:
+                task_id = assoc_result.data.task_id
+                if task_id:
+                    # Get task title
+                    task_result = self.task_repo.get(task_id)
+                    task_title = (
+                        task_result.data.title
+                        if task_result.is_success and task_result.data
+                        else "Unknown"
+                    )
+
+                    # Get criteria counts
+                    criteria = self._get_task_criteria(task_id)
+                    total_count = len(criteria)
+                    met_count = len([c for c in criteria if c.get("is_met", False)])
+
+                    hints = self._hint_generator.post_criteria_met(
+                        task_id=task_id,
+                        task_title=task_title,
+                        criteria_id=criteria_id,
+                        met_count=met_count,
+                        total_count=total_count,
+                    )
+                    hint_data = self._hint_generator.format_for_response(hints)
+                    result_data.update(hint_data)
+                    result_data["task_id"] = task_id
+
+        return DomainSuccess.create(data=result_data)
 
     def mark_criteria_unmet(self, criteria_id: str) -> DomainResult[Dict[str, Any]]:
         """Mark an acceptance criterion as not met."""
@@ -334,13 +488,44 @@ class TaskService:
         observations = entity.observations
         content = observations[0] if observations else ""
 
-        return DomainSuccess.create(
-            data={
-                "id": criteria_id,
-                "content": content,
-                "is_met": False,
-            }
-        )
+        result_data: Dict[str, Any] = {
+            "id": criteria_id,
+            "content": content,
+            "is_met": False,
+        }
+
+        # Generate hints if hint generator is available
+        if self._hint_generator:
+            # Get task info from association
+            assoc_result = self.memory_association_repo.get_by_entity(criteria_id)
+            if assoc_result.is_success and assoc_result.data:
+                task_id = assoc_result.data.task_id
+                if task_id:
+                    # Get task title
+                    task_result = self.task_repo.get(task_id)
+                    task_title = (
+                        task_result.data.title
+                        if task_result.is_success and task_result.data
+                        else "Unknown"
+                    )
+
+                    # Get criteria counts
+                    criteria = self._get_task_criteria(task_id)
+                    total_count = len(criteria)
+                    met_count = len([c for c in criteria if c.get("is_met", False)])
+
+                    hints = self._hint_generator.post_criteria_unmet(
+                        task_id=task_id,
+                        task_title=task_title,
+                        criteria_id=criteria_id,
+                        met_count=met_count,
+                        total_count=total_count,
+                    )
+                    hint_data = self._hint_generator.format_for_response(hints)
+                    result_data.update(hint_data)
+                    result_data["task_id"] = task_id
+
+        return DomainSuccess.create(data=result_data)
 
     # --- Research Operations ---
 
@@ -382,6 +567,9 @@ class TaskService:
                 "observations": [content],
                 "metadata": {"research_type": research_type},
             }
+        )
+        entity_result = self._validate_result_data(
+            entity_result, f"create research entity for task {task_id}"
         )
         if entity_result.is_failure:
             return entity_result
@@ -447,6 +635,9 @@ class TaskService:
                 "observations": [content],
                 "metadata": {},
             }
+        )
+        entity_result = self._validate_result_data(
+            entity_result, f"create implementation note entity for task {task_id}"
         )
         if entity_result.is_failure:
             return entity_result
@@ -514,6 +705,9 @@ class TaskService:
                 "metadata": {"step_type": step_type},
             }
         )
+        entity_result = self._validate_result_data(
+            entity_result, f"create testing step entity for task {task_id}"
+        )
         if entity_result.is_failure:
             return entity_result
 
@@ -555,6 +749,10 @@ class TaskService:
         for assoc in assoc_result.data or []:
             entity_result = self.memory_entity_repo.get(assoc.memory_entity_id)
             if entity_result.is_failure:
+                logger.warning(
+                    f"Failed to retrieve acceptance criteria entity {assoc.memory_entity_id} "
+                    f"for task {task_id}: {entity_result.error_message}"
+                )
                 continue
 
             entity = entity_result.data
@@ -585,6 +783,10 @@ class TaskService:
         for assoc in assoc_result.data or []:
             entity_result = self.memory_entity_repo.get(assoc.memory_entity_id)
             if entity_result.is_failure:
+                logger.warning(
+                    f"Failed to retrieve research entity {assoc.memory_entity_id} "
+                    f"for task {task_id}: {entity_result.error_message}"
+                )
                 continue
 
             entity = entity_result.data
@@ -615,6 +817,10 @@ class TaskService:
         for assoc in assoc_result.data or []:
             entity_result = self.memory_entity_repo.get(assoc.memory_entity_id)
             if entity_result.is_failure:
+                logger.warning(
+                    f"Failed to retrieve implementation note entity {assoc.memory_entity_id} "
+                    f"for task {task_id}: {entity_result.error_message}"
+                )
                 continue
 
             entity = entity_result.data
@@ -643,6 +849,10 @@ class TaskService:
         for assoc in assoc_result.data or []:
             entity_result = self.memory_entity_repo.get(assoc.memory_entity_id)
             if entity_result.is_failure:
+                logger.warning(
+                    f"Failed to retrieve testing step entity {assoc.memory_entity_id} "
+                    f"for task {task_id}: {entity_result.error_message}"
+                )
                 continue
 
             entity = entity_result.data

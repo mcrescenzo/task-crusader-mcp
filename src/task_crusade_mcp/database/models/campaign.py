@@ -5,6 +5,7 @@ Represents a campaign - a container for organizing related tasks.
 """
 
 import json
+import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -18,6 +19,8 @@ from task_crusade_mcp.database.models.base import (
     generate_id,
     get_current_timestamp,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Campaign(Base):
@@ -57,7 +60,11 @@ class Campaign(Base):
             return {}
         try:
             return json.loads(self.metadata_json)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.error(
+                f"JSON parse error in Campaign.metadata for {self.id}: {str(e)}",
+                extra={"record_id": self.id, "error_type": type(e).__name__},
+            )
             return {}
 
     def set_metadata(self, metadata: Dict[str, Any]) -> None:

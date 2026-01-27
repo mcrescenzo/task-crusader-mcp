@@ -84,7 +84,11 @@ class CampaignTaskPane(Vertical):
         self._last_selected_campaign_id: str | None = None
         self._last_selected_task_id: str | None = None
         self._last_focused_pane_index: int = -1
-        self._suppress_task_selection: bool = False
+        # H2 fix: Use campaign_id tracking instead of boolean for proper suppression
+        self._suppress_for_campaign_id: str | None = None
+        # Search state for header display
+        self._task_search_query: str = ""
+        self._campaign_search_query: str = ""
 
     def compose(self) -> ComposeResult:
         """Compose the pane layout with 3-pane content."""
@@ -141,35 +145,65 @@ class CampaignTaskPane(Vertical):
                 return label
         return filter_value.title()
 
-    def _update_campaign_header(self, filter_value: str) -> None:
-        """Update the campaign pane header to show current filter."""
+    def _update_campaign_header(
+        self, filter_value: str | None = None, search_query: str | None = None
+    ) -> None:
+        """Update the campaign pane header to show current filter and search."""
         from task_crusade_mcp.tui.constants import CAMPAIGN_STATUS_FILTER_OPTIONS
 
         try:
             header = self.query_one("#campaign-pane-header", Static)
-            label = self._get_filter_label(filter_value, CAMPAIGN_STATUS_FILTER_OPTIONS)
-            header.update(f"CAMPAIGNS ({label})")
-        except Exception:
-            pass
 
-    def _update_task_header(self, filter_value: str) -> None:
-        """Update the task pane header to show current filter."""
+            # Use provided values or fall back to stored state
+            if filter_value is not None:
+                label = self._get_filter_label(filter_value, CAMPAIGN_STATUS_FILTER_OPTIONS)
+            else:
+                campaign_list = self.query_one("#campaign-list", CampaignListWidget)
+                label = self._get_filter_label(
+                    campaign_list.status_filter, CAMPAIGN_STATUS_FILTER_OPTIONS
+                )
+
+            query = search_query if search_query is not None else self._campaign_search_query
+
+            if query:
+                header.update(f"CAMPAIGNS ({label}) Search: '{query}'")
+            else:
+                header.update(f"CAMPAIGNS ({label})")
+        except Exception as e:
+            logger.debug(f"Failed to update campaign header: {e}")
+
+    def _update_task_header(
+        self, filter_value: str | None = None, search_query: str | None = None
+    ) -> None:
+        """Update the task pane header to show current filter and search."""
         from task_crusade_mcp.tui.constants import STATUS_FILTER_OPTIONS
 
         try:
             header = self.query_one("#task-pane-header", Static)
-            label = self._get_filter_label(filter_value, STATUS_FILTER_OPTIONS)
-            header.update(f"TASKS ({label})")
-        except Exception:
-            pass
+
+            # Use provided values or fall back to stored state
+            if filter_value is not None:
+                label = self._get_filter_label(filter_value, STATUS_FILTER_OPTIONS)
+            else:
+                task_list = self.query_one("#task-list", TaskDataTable)
+                label = self._get_filter_label(task_list.status_filter, STATUS_FILTER_OPTIONS)
+
+            query = search_query if search_query is not None else self._task_search_query
+
+            if query:
+                header.update(f"TASKS ({label}) Search: '{query}'")
+            else:
+                header.update(f"TASKS ({label})")
+        except Exception as e:
+            logger.debug(f"Failed to update task header: {e}")
 
     def _update_detail_header(self, title: str) -> None:
         """Update the detail pane header text."""
         try:
             header = self.query_one("#detail-pane-header", Static)
             header.update(title)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to update detail header: {e}")
 
     @on(CampaignListWidget.CampaignFilterChanged)
     def on_campaign_filter_changed(self, event: CampaignListWidget.CampaignFilterChanged) -> None:
@@ -195,7 +229,8 @@ class CampaignTaskPane(Vertical):
             campaign_pane = self.query_one("#campaign-pane", Vertical)
             task_pane = self.query_one("#task-pane", Vertical)
             detail_pane = self.query_one("#detail-pane", Vertical)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Panes not ready for responsive layout: {e}")
             return
 
         width = self._current_width
@@ -258,16 +293,16 @@ class CampaignTaskPane(Vertical):
                 f"Minimum: {self.MIN_WIDTH}x{self.MIN_HEIGHT}"
             )
             warning.add_class("visible")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to show size warning: {e}")
 
     def _hide_size_warning(self) -> None:
         """Hide the size warning banner."""
         try:
             warning = self.query_one("#size-warning", Static)
             warning.remove_class("visible")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to hide size warning: {e}")
 
     def on_campaign_list_widget_campaign_selected(
         self, event: CampaignListWidget.CampaignSelected
@@ -277,7 +312,8 @@ class CampaignTaskPane(Vertical):
 
         self._last_selected_campaign_id = event.campaign_id
         self._last_selected_task_id = None
-        self._suppress_task_selection = True
+        # H2 fix: Track which campaign triggered suppression
+        self._suppress_for_campaign_id = event.campaign_id
 
         task_data_table = self.query_one("#task-list", TaskDataTable)
         self.run_worker(task_data_table.load_tasks(campaign_id=event.campaign_id))
@@ -290,13 +326,20 @@ class CampaignTaskPane(Vertical):
         """Handle task selection - load details for the selected task."""
         logger.debug(
             f"[TASK SELECTED] task_id={event.task_id[:8]}..., "
-            f"suppression={self._suppress_task_selection}"
+            f"suppress_for_campaign={self._suppress_for_campaign_id}"
         )
 
-        if self._suppress_task_selection:
-            logger.debug("[TASK SELECTED] Suppressed - clearing flag and returning")
-            self._suppress_task_selection = False
-            return
+        # H2 fix: Only suppress if task belongs to the campaign that triggered suppression
+        if self._suppress_for_campaign_id is not None:
+            # Check if this task belongs to the suppressed campaign
+            task_data_table = self.query_one("#task-list", TaskDataTable)
+            if task_data_table._campaign_id == self._suppress_for_campaign_id:
+                logger.debug("[TASK SELECTED] Suppressed - clearing campaign_id and returning")
+                self._suppress_for_campaign_id = None
+                return
+            else:
+                # Task from different campaign, don't suppress
+                self._suppress_for_campaign_id = None
 
         logger.debug(
             "[TASK SELECTED] Processing - setting _last_selected_task_id "
@@ -315,7 +358,7 @@ class CampaignTaskPane(Vertical):
         """Handle campaign deletion - clear task list and detail panel."""
         self._last_selected_campaign_id = None
         self._last_selected_task_id = None
-        self._suppress_task_selection = False
+        self._suppress_for_campaign_id = None
 
         task_data_table = self.query_one("#task-list", TaskDataTable)
         self.run_worker(task_data_table.clear_tasks())
@@ -323,6 +366,83 @@ class CampaignTaskPane(Vertical):
         task_detail = self.query_one("#task-detail", TaskDetailWidget)
         self._update_detail_header("DETAILS")
         self.run_worker(task_detail.clear_task())
+
+    @on(TaskDataTable.TaskDeleteRequested)
+    async def on_task_data_table_task_delete_requested(
+        self, event: TaskDataTable.TaskDeleteRequested
+    ) -> None:
+        """Handle task deletion request - show confirmation modal."""
+        task_id = event.task_id
+
+        # Get task info from the task data table
+        task_data_table = self.query_one("#task-list", TaskDataTable)
+        task = next(
+            (t for t in task_data_table._all_tasks if t.get("id") == task_id),
+            None,
+        )
+        if not task:
+            return
+
+        from task_crusade_mcp.tui.widgets.delete_modal import DeleteModal
+
+        modal = DeleteModal(
+            item_type="task",
+            item_id=task_id,
+            item_name=task.get("title", "Unknown"),
+            counts={},
+        )
+
+        await self.app.push_screen(modal, callback=self._handle_task_delete_result)
+
+    def _handle_task_delete_result(
+        self, result: tuple[bool, str | None, str | None] | bool | None
+    ) -> None:
+        """Handle task delete modal result."""
+        if not isinstance(result, tuple) or not result[0]:
+            return
+
+        _, item_type, item_id = result
+        if item_type == "task" and item_id:
+            self.app.call_later(self._perform_task_delete, item_id)
+
+    async def _perform_task_delete(self, task_id: str) -> None:
+        """Perform the task deletion."""
+        try:
+            await self.data_service.delete_task(task_id)
+            self.notify("Task deleted", severity="information")
+
+            task_data_table = self.query_one("#task-list", TaskDataTable)
+            task_data_table.post_message(TaskDataTable.TaskDeleted(task_id))
+
+            # Refresh task list
+            await task_data_table.refresh_tasks()
+
+            # Clear detail if the deleted task was selected
+            if self._last_selected_task_id == task_id:
+                self._last_selected_task_id = None
+                task_detail = self.query_one("#task-detail", TaskDetailWidget)
+                self._update_detail_header("DETAILS")
+                await task_detail.clear_task()
+
+        except Exception as e:
+            logger.error(f"Failed to delete task: {e}")
+            self.notify(f"Delete failed: {e}", severity="error")
+
+    @on(TaskDataTable.TaskSearchChanged)
+    def on_task_data_table_task_search_changed(
+        self, event: TaskDataTable.TaskSearchChanged
+    ) -> None:
+        """Handle task search change - update pane header."""
+        self._task_search_query = event.query
+        self._update_task_header(search_query=event.query)
+
+    @on(CampaignListWidget.CampaignSearchChanged)
+    def on_campaign_list_widget_campaign_search_changed(
+        self, event: CampaignListWidget.CampaignSearchChanged
+    ) -> None:
+        """Handle campaign search change - update pane header."""
+        self._campaign_search_query = event.query
+        self._update_campaign_header(search_query=event.query)
 
     def _get_focusable_panes(
         self,

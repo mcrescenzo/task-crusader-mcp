@@ -19,7 +19,20 @@ Parameters:
 - description (optional): Campaign description
 - priority (optional): "low", "medium" (default), or "high"
 
-Returns: Created campaign with ID.""",
+Returns: Created campaign with ID.
+
+RESPONSE FORMAT:
+```yaml
+success: true
+data:
+  id: <campaign-id>       # ← Campaign ID - use for task_create, campaign_update, etc.
+  name: Campaign name
+  status: planning
+  priority: medium
+  # ... other campaign fields ...
+```
+
+IMPORTANT: Extract campaign ID from `data.id` for subsequent operations.""",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -36,10 +49,11 @@ Returns: Created campaign with ID.""",
         ),
         Tool(
             name="campaign_list",
-            description="""List all campaigns with optional status filter.
+            description="""List all campaigns with optional filters.
 
 Parameters:
 - status (optional): Filter by "planning", "active", "completed", or "cancelled"
+- priority (optional): Filter by "low", "medium", or "high"
 
 Returns: List of campaigns with task statistics.""",
             inputSchema={
@@ -49,6 +63,11 @@ Returns: List of campaigns with task statistics.""",
                         "type": "string",
                         "enum": ["planning", "active", "completed", "cancelled"],
                         "description": "Filter by status",
+                    },
+                    "priority": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high"],
+                        "description": "Filter by priority",
                     },
                 },
             },
@@ -154,7 +173,7 @@ IMPORTANT: Returns acceptance_criteria_details with IDs for marking criteria met
 
 Parameters:
 - campaign_id (required): Campaign ID
-- context_depth (optional): "basic" (default) or "full"
+- context_depth (optional): Context level - "basic" (default) returns task data with acceptance criteria, "full" additionally includes research items and implementation notes
 
 Returns: Next task with criteria, progress summary, and execution guidance.""",
             inputSchema={
@@ -181,7 +200,7 @@ to be worked on (dependencies met).
 Parameters:
 - campaign_id (required): Campaign ID
 - max_results (optional): Maximum tasks to return (default: 10, max: 50)
-- context_depth (optional): "basic" (default) or "full"
+- context_depth (optional): Context level - "basic" (default) returns task data with acceptance criteria, "full" additionally includes research items and implementation notes
 
 Returns: List of actionable tasks with coordination warnings.""",
             inputSchema={
@@ -235,7 +254,16 @@ Parameters:
 - content (required): Research content
 - research_type (optional): "strategy", "analysis", or "requirements"
 
-Returns: Created research item.""",
+Returns: Created research item.
+
+RESPONSE FORMAT:
+```yaml
+success: true
+data:
+  id: <research-id>
+  content: Research text
+  research_type: strategy
+```""",
             inputSchema={
                 "type": "object",
                 "properties": {

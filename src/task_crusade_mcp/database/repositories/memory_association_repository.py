@@ -103,6 +103,26 @@ class MemoryAssociationRepository:
         except Exception as e:
             return DomainError.operation_failed("get_memory_association", str(e))
 
+    def get_by_entity(
+        self, memory_entity_id: str
+    ) -> DomainResult[Optional[MemoryTaskAssociationDTO]]:
+        """Get memory task association by entity ID (first match)."""
+        try:
+            with self.orm_manager.get_session() as session:
+                assoc = session.execute(
+                    select(MemoryTaskAssociation).where(
+                        MemoryTaskAssociation.memory_entity_id == memory_entity_id
+                    )
+                ).scalar_one_or_none()
+
+                if not assoc:
+                    return DomainSuccess.create(data=None)
+
+                return DomainSuccess.create(data=self._to_dto(assoc))
+
+        except Exception as e:
+            return DomainError.operation_failed("get_memory_association_by_entity", str(e))
+
     def list_by_task(
         self,
         task_id: str,

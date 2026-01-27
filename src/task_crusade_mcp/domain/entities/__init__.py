@@ -1,6 +1,7 @@
 """Domain entities - Data Transfer Objects."""
 
 from task_crusade_mcp.domain.entities.campaign import CampaignDTO
+from task_crusade_mcp.domain.entities.hint import Hint, HintCategory, HintCollection
 from task_crusade_mcp.domain.entities.memory import (
     MemoryEntityDTO,
     MemorySessionDTO,
@@ -24,4 +25,7 @@ __all__ = [
     "MemoryEntityDTO",
     "MemorySessionDTO",
     "MemoryTaskAssociationDTO",
+    "Hint",
+    "HintCategory",
+    "HintCollection",
 ]

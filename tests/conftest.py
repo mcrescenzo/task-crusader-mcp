@@ -78,7 +78,15 @@ def task_repo(orm_manager: ORMManager):
 
 
 @pytest.fixture
-def campaign_service(orm_manager: ORMManager):
+def hint_generator():
+    """Create a hint generator."""
+    from task_crusade_mcp.services import HintGenerator
+
+    return HintGenerator(enabled=True)
+
+
+@pytest.fixture
+def campaign_service(orm_manager: ORMManager, hint_generator):
     """Create a campaign service with all dependencies."""
     from task_crusade_mcp.database.repositories import (
         CampaignRepository,
@@ -95,11 +103,12 @@ def campaign_service(orm_manager: ORMManager):
         memory_session_repo=MemorySessionRepository(orm_manager),
         memory_entity_repo=MemoryEntityRepository(orm_manager),
         memory_association_repo=MemoryAssociationRepository(orm_manager),
+        hint_generator=hint_generator,
     )
 
 
 @pytest.fixture
-def task_service(orm_manager: ORMManager):
+def task_service(orm_manager: ORMManager, hint_generator):
     """Create a task service with all dependencies."""
     from task_crusade_mcp.database.repositories import (
         CampaignRepository,
@@ -116,4 +125,5 @@ def task_service(orm_manager: ORMManager):
         memory_session_repo=MemorySessionRepository(orm_manager),
         memory_entity_repo=MemoryEntityRepository(orm_manager),
         memory_association_repo=MemoryAssociationRepository(orm_manager),
+        hint_generator=hint_generator,
     )

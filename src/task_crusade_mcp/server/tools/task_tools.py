@@ -23,7 +23,33 @@ Parameters:
 - dependencies (optional): List of task IDs this task depends on
 - acceptance_criteria (optional): List of acceptance criteria strings
 
-Returns: Created task with ID.""",
+Returns: Created task with ID.
+
+RESPONSE FORMAT:
+```yaml
+success: true
+data:
+  id: <task-id>           # ← Task ID - use for task_update, task_complete, etc.
+  title: Task title
+  campaign_id: <campaign-id>
+  status: pending
+  priority: medium
+  # ... other task fields ...
+  acceptance_criteria_details:  # Only if acceptance_criteria provided
+    - id: <criteria-id>    # ← Different from task ID
+      content: Criterion text
+      is_met: false
+```
+
+IMPORTANT:
+- Extract task ID from `data.id` for subsequent operations
+- Criteria IDs are at `data.acceptance_criteria_details[].id`
+
+EXAMPLE:
+```
+result = task_create(title="Fix bug", campaign_id="camp-123")
+task_id = result.data.id  # Use this ID
+```""",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -185,7 +211,16 @@ Parameters:
 - task_id (required): Task ID
 - content (required): Criterion description
 
-Returns: Created criterion with ID (use ID to mark as met).""",
+Returns: Created criterion with ID (use ID to mark as met).
+
+RESPONSE FORMAT:
+```yaml
+success: true
+data:
+  id: <criteria-id>       # ← Use this ID for task_acceptance_criteria_mark_met
+  content: Criterion text
+  is_met: false
+```""",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -290,7 +325,9 @@ Testing steps provide verification guidance. Step types:
 - trigger: Action to perform
 - verify: Expected outcome verification
 - cleanup: Cleanup steps
-- debug/fix/iterate: For troubleshooting
+- debug: Troubleshooting and investigation
+- fix: Corrective actions during testing
+- iterate: Refinement and retesting cycles
 
 Parameters:
 - task_id (required): Task ID

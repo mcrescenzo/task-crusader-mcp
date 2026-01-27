@@ -6,6 +6,7 @@ These are used internally for task operations - not exposed via MCP.
 """
 
 import json
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,8 @@ from task_crusade_mcp.database.models.base import (
     generate_id,
     get_current_timestamp,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class MemorySession(Base):
@@ -60,7 +63,11 @@ class MemorySession(Base):
             return {}
         try:
             return json.loads(self.metadata_json)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.error(
+                f"JSON parse error in MemorySession.metadata for {self.id}: {str(e)}",
+                extra={"record_id": self.id, "error_type": type(e).__name__},
+            )
             return {}
 
     def set_metadata(self, metadata: Dict[str, Any]) -> None:
@@ -120,7 +127,11 @@ class MemoryEntity(Base):
             return []
         try:
             return json.loads(self.observations_json)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.error(
+                f"JSON parse error in MemoryEntity.observations for {self.id}: {str(e)}",
+                extra={"record_id": self.id, "error_type": type(e).__name__},
+            )
             return []
 
     def set_observations(self, observations: List[str]) -> None:
@@ -139,7 +150,11 @@ class MemoryEntity(Base):
             return {}
         try:
             return json.loads(self.metadata_json)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.error(
+                f"JSON parse error in MemoryEntity.metadata for {self.id}: {str(e)}",
+                extra={"record_id": self.id, "error_type": type(e).__name__},
+            )
             return {}
 
     def set_metadata(self, metadata: Dict[str, Any]) -> None:
@@ -176,6 +191,10 @@ class MemoryTaskAssociation(Base):
     Memory Task Association model.
 
     Links memory entities to tasks and campaigns with typed associations.
+
+    Note: Both task_id and campaign_id use CASCADE delete to prevent orphaned
+    associations when parent entities are deleted. This ensures data integrity
+    and prevents silent data loss.
     """
 
     __tablename__ = "memory_task_associations"
@@ -186,7 +205,7 @@ class MemoryTaskAssociation(Base):
     )
     task_id: Optional[str] = Column(String(36), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True)
     campaign_id: Optional[str] = Column(
-        String(36), ForeignKey("campaigns.id"), nullable=True, index=True
+        String(36), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=True, index=True
     )
     association_type: str = Column(String(50), nullable=False, index=True)
     notes: Optional[str] = Column(Text, nullable=True)

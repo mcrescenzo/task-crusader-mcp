@@ -58,6 +58,9 @@ class CrusaderTUI(App):
     TITLE = "Task Crusade"
     CSS_PATH = Path(__file__).parent / "styles" / "app.tcss"
 
+    # Disable the default command palette (not implemented)
+    ENABLE_COMMAND_PALETTE = False
+
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
         Binding("question_mark", "help", "Help", show=False),
@@ -82,7 +85,7 @@ class CrusaderTUI(App):
         """Show help information."""
         self.notify(
             "Tab: Switch panes | j/k: Navigate | f: Filter | /: Search | "
-            "d: Delete | v: Multi-select | r: Refresh | q: Quit",
+            "Ctrl+L: Clear Search | d: Delete | v: Multi-select | r: Refresh | q: Quit",
             title="Keyboard Shortcuts",
             timeout=10,
         )

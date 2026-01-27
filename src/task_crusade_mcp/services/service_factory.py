@@ -14,6 +14,7 @@ from task_crusade_mcp.database.orm_manager import ORMManager, get_orm_manager
 
 if TYPE_CHECKING:
     from task_crusade_mcp.services.campaign_service import CampaignService
+    from task_crusade_mcp.services.hint_generator import HintGenerator
     from task_crusade_mcp.services.task_service import TaskService
 from task_crusade_mcp.database.repositories import (
     CampaignRepository,
@@ -82,6 +83,7 @@ class ServiceFactory:
         # Service cache
         self._campaign_service: Optional["CampaignService"] = None
         self._task_service: Optional["TaskService"] = None
+        self._hint_generator: Optional["HintGenerator"] = None
 
     @property
     def orm_manager(self) -> ORMManager:
@@ -125,6 +127,15 @@ class ServiceFactory:
             return self._memory_association_repo
 
     # Service getters
+    def get_hint_generator(self) -> "HintGenerator":
+        """Get or create the hint generator."""
+        from task_crusade_mcp.services.hint_generator import HintGenerator
+
+        with self._lock:
+            if self._hint_generator is None:
+                self._hint_generator = HintGenerator(enabled=True)
+            return self._hint_generator
+
     def get_campaign_service(self) -> "CampaignService":
         """Get or create the campaign service."""
         from task_crusade_mcp.services.campaign_service import CampaignService
@@ -137,6 +148,7 @@ class ServiceFactory:
                     memory_session_repo=self.get_memory_session_repository(),
                     memory_entity_repo=self.get_memory_entity_repository(),
                     memory_association_repo=self.get_memory_association_repository(),
+                    hint_generator=self.get_hint_generator(),
                 )
             return self._campaign_service
 
@@ -152,5 +164,6 @@ class ServiceFactory:
                     memory_session_repo=self.get_memory_session_repository(),
                     memory_entity_repo=self.get_memory_entity_repository(),
                     memory_association_repo=self.get_memory_association_repository(),
+                    hint_generator=self.get_hint_generator(),
                 )
             return self._task_service

@@ -118,6 +118,19 @@ class CampaignListWidget(ListView):
             self.filter_value = filter_value
             self.filter_label = filter_label
 
+    class CampaignSearchChanged(Message):
+        """Message emitted when the campaign search filter changes.
+
+        Attributes:
+            query: The current search query string.
+            is_active: Whether search filter is currently active.
+        """
+
+        def __init__(self, query: str, is_active: bool) -> None:
+            super().__init__()
+            self.query = query
+            self.is_active = is_active
+
     BINDINGS = [
         ("j", "cursor_down", "Down"),
         ("k", "cursor_up", "Up"),
@@ -125,6 +138,7 @@ class CampaignListWidget(ListView):
         ("G", "last", "Last"),
         ("f", "cycle_filter", "Filter"),
         ("slash", "open_search", "Search"),
+        ("ctrl+l", "clear_search", "Clear Search"),
         ("d", "delete_campaign", "Delete"),
     ]
 
@@ -304,7 +318,7 @@ class CampaignListWidget(ListView):
         await self.load_campaigns()
 
         self.post_message(self.CampaignFilterChanged(new_filter, new_label))
-        self.notify(f"Filter: {new_label}", severity="information")
+        self.notify(f"Filter: {new_label}", severity="information", timeout=1.5)
 
     async def action_open_search(self) -> None:
         """Open search input."""
@@ -345,6 +359,7 @@ class CampaignListWidget(ListView):
         """Handle search input changes."""
         self._search_query = event.value
         await self._refresh_display()
+        self.post_message(self.CampaignSearchChanged(self._search_query, bool(self._search_query)))
 
     @on(Input.Submitted, "#campaign-search-input")
     async def on_search_input_submitted(self, event: Input.Submitted) -> None:
@@ -355,7 +370,24 @@ class CampaignListWidget(ListView):
         """Handle key events for search escape."""
         if getattr(self, "_search_active", False) and event.key == "escape":
             event.stop()
+            # Escape closes the search input but keeps the filter active
+            await self._close_search(clear_filter=False)
+
+    async def action_clear_search(self) -> None:
+        """Clear the search filter and reset the display."""
+        # Close the search input if it's open
+        if self._search_active:
             await self._close_search(clear_filter=True)
+            self.notify("Search cleared", severity="information", timeout=1.5)
+            return
+
+        if not self._search_query:
+            return
+
+        self._search_query = ""
+        await self._refresh_display()
+        self.post_message(self.CampaignSearchChanged("", False))
+        self.notify("Search cleared", severity="information", timeout=1.5)
 
     async def action_delete_campaign(self) -> None:
         """Request deletion of selected campaign."""

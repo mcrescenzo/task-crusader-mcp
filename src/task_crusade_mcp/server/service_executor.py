@@ -98,11 +98,19 @@ class ServiceExecutor:
             return self._format_error(str(e))
 
     def _format_result(self, data: Any, success: bool = True) -> str:
-        """Format result as YAML."""
-        result = {
+        """Format result as YAML with hints extracted to top level."""
+        result: Dict[str, Any] = {
             "success": success,
             "data": data,
         }
+
+        # Extract hints from data if present (placed by services)
+        if isinstance(data, dict):
+            if "hints" in data:
+                result["hints"] = data.pop("hints")
+            if "next_action" in data:
+                result["next_action"] = data.pop("next_action")
+
         return yaml.dump(result, default_flow_style=False, allow_unicode=True)
 
     def _format_error(self, message: str, suggestions: Optional[list] = None) -> str:

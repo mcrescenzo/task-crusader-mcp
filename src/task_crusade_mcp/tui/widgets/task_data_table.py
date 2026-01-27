@@ -64,6 +64,30 @@ class TaskDataTable(DataTable):
             super().__init__()
             self.task_id = task_id
 
+    class TaskDeleted(Message):
+        """Message emitted when a task is deleted.
+
+        Attributes:
+            task_id: UUID of the deleted task.
+        """
+
+        def __init__(self, task_id: str) -> None:
+            super().__init__()
+            self.task_id = task_id
+
+    class TaskSearchChanged(Message):
+        """Message emitted when the task search filter changes.
+
+        Attributes:
+            query: The current search query string.
+            is_active: Whether search filter is currently active.
+        """
+
+        def __init__(self, query: str, is_active: bool) -> None:
+            super().__init__()
+            self.query = query
+            self.is_active = is_active
+
     class TaskFilterChanged(Message):
         """Message emitted when the task status filter changes."""
 
@@ -78,12 +102,13 @@ class TaskDataTable(DataTable):
         ("g", "scroll_top", "First"),
         ("G", "scroll_bottom", "Last"),
         ("f", "cycle_filter", "Filter"),
-        ("a", "toggle_actionable_filter", "Actionable"),
+        ("ctrl+a", "toggle_actionable_filter", "Actionable"),
         ("d", "delete_task", "Delete"),
         ("slash", "open_search", "Search"),
+        ("ctrl+l", "clear_search", "Clear Search"),
         ("v", "toggle_selection_mode", "Selection Mode"),
         ("space", "toggle_selection", "Toggle Selection"),
-        ("A", "select_all_visible", "Select All"),
+        ("shift+a", "select_all_visible", "Select All"),
         ("b", "open_bulk_actions", "Bulk Actions"),
     ]
 
@@ -111,7 +136,6 @@ class TaskDataTable(DataTable):
         self._config_service = config_service or TUIConfigService()
 
         # Configure columns
-        self.add_column("#", width=4, key="order")
         self.add_column("Task", width=None, key="task")
         self.add_column("Pri", width=3, key="priority")
 
@@ -167,6 +191,9 @@ class TaskDataTable(DataTable):
         if campaign_id is None and tasks is None:
             raise ValueError("Must provide either campaign_id or tasks parameter")
 
+        # Clear selection state when loading new tasks (M2 fix)
+        self._selected_keys.clear()
+
         if campaign_id is not None:
             self._campaign_id = campaign_id
             self._is_loading = True
@@ -207,13 +234,10 @@ class TaskDataTable(DataTable):
 
             for task in tasks:
                 task_id = task.get("id", "")
-                priority_order = task.get("priority_order", 0)
-
-                order_str = str(priority_order)
                 task_cell = self._render_task_cell(task)
                 priority_cell = self._render_priority_cell(task)
 
-                self.add_row(order_str, task_cell, priority_cell, key=task_id)
+                self.add_row(task_cell, priority_cell, key=task_id)
         finally:
             self._is_loading = False
 
@@ -221,7 +245,7 @@ class TaskDataTable(DataTable):
         """Display loading indicator."""
         self._is_loading = True
         self.clear()
-        loading_row = ("", "Loading tasks...", "")
+        loading_row = ("Loading tasks...", "")
         self.add_row(*loading_row, key="loading")
 
     async def _show_empty_state(self) -> None:
@@ -237,7 +261,7 @@ class TaskDataTable(DataTable):
             )
             message = f"No {filter_label.lower()} tasks found\n\nTry a different filter"
 
-        empty_row = ("", message, "")
+        empty_row = (message, "")
         self.add_row(*empty_row, key="empty")
 
     def _enrich_dependency_details(self) -> None:
@@ -332,13 +356,10 @@ class TaskDataTable(DataTable):
 
         for task in tasks:
             task_id = task.get("id", "")
-            priority_order = task.get("priority_order", 0)
-
-            order_str = str(priority_order)
             task_cell = self._render_task_cell(task)
             priority_cell = self._render_priority_cell(task)
 
-            self.add_row(order_str, task_cell, priority_cell, key=task_id)
+            self.add_row(task_cell, priority_cell, key=task_id)
 
     def get_selected_task_id(self) -> Optional[str]:
         """Get the task_id of the currently selected row."""
@@ -492,7 +513,7 @@ class TaskDataTable(DataTable):
             self.move_cursor(row=0)
 
         self.post_message(self.TaskFilterChanged(new_filter, new_label))
-        self.notify(f"Filter: {new_label}", severity="information")
+        self.notify(f"Filter: {new_label}", severity="information", timeout=1.5)
 
     async def action_toggle_actionable_filter(self) -> None:
         """Toggle the actionable-only filter on/off."""
@@ -505,10 +526,11 @@ class TaskDataTable(DataTable):
             self.notify(
                 "Filter: Actionable (pending tasks ready to work on)",
                 severity="information",
+                timeout=1.5,
             )
         else:
             filter_label = "All"
-            self.notify("Filter: Actionable filter OFF", severity="information")
+            self.notify("Filter: Actionable filter OFF", severity="information", timeout=1.5)
 
         filter_value = "actionable" if self._show_actionable_only else "all"
         self.post_message(self.TaskFilterChanged(filter_value, filter_label))
@@ -552,6 +574,7 @@ class TaskDataTable(DataTable):
         """Handle search input changes for real-time filtering."""
         self._search_query = event.value
         await self._apply_filters()
+        self.post_message(self.TaskSearchChanged(self._search_query, bool(self._search_query)))
 
     @on(Input.Submitted, "#task-search-input")
     async def on_search_input_submitted(self, event: Input.Submitted) -> None:
@@ -562,10 +585,27 @@ class TaskDataTable(DataTable):
         """Handle key events for search escape and selection mode exit."""
         if getattr(self, "_search_active", False) and event.key == "escape":
             event.stop()
-            await self._close_search(clear_filter=True)
+            # Escape closes the search input but keeps the filter active
+            await self._close_search(clear_filter=False)
         elif getattr(self, "_selection_mode", False) and event.key == "escape":
             event.stop()
             await self.action_toggle_selection_mode()
+
+    async def action_clear_search(self) -> None:
+        """Clear the search filter and reset the display."""
+        # Close the search input if it's open
+        if self._search_active:
+            await self._close_search(clear_filter=True)
+            self.notify("Search cleared", severity="information", timeout=1.5)
+            return
+
+        if not self._search_query:
+            return
+
+        self._search_query = ""
+        await self._apply_filters()
+        self.post_message(self.TaskSearchChanged("", False))
+        self.notify("Search cleared", severity="information", timeout=1.5)
 
     async def action_toggle_selection_mode(self) -> None:
         """Toggle selection mode on/off."""

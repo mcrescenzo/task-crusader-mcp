@@ -5,7 +5,10 @@ Provides high-level campaign operations with proper error handling
 and orchestration of repository calls.
 """
 
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from task_crusade_mcp.database.repositories import (
     CampaignRepository,
@@ -19,6 +22,11 @@ from task_crusade_mcp.domain.entities.result_types import (
     DomainResult,
     DomainSuccess,
 )
+
+if TYPE_CHECKING:
+    from task_crusade_mcp.services.hint_generator import HintGenerator
+
+logger = logging.getLogger(__name__)
 
 
 class CampaignService:
@@ -36,13 +44,46 @@ class CampaignService:
         memory_session_repo: MemorySessionRepository,
         memory_entity_repo: MemoryEntityRepository,
         memory_association_repo: MemoryAssociationRepository,
+        hint_generator: Optional["HintGenerator"] = None,
     ):
-        """Initialize service with repositories."""
+        """Initialize service with repositories and hint generator."""
         self.campaign_repo = campaign_repo
         self.task_repo = task_repo
         self.memory_session_repo = memory_session_repo
         self.memory_entity_repo = memory_entity_repo
         self.memory_association_repo = memory_association_repo
+        self._hint_generator = hint_generator
+
+    # --- Helper Methods ---
+
+    def _validate_result_data(
+        self,
+        result: DomainResult[Any],
+        operation: str,
+    ) -> DomainResult[Any]:
+        """
+        Validate that a successful result has data.
+
+        Protects against None dereference when accessing result.data attributes.
+
+        Args:
+            result: The result to validate
+            operation: Description of the operation for error messages
+
+        Returns:
+            The original result if valid, or a DomainError if data is None
+        """
+        if result.is_failure:
+            return result
+
+        if result.data is None:
+            return DomainError.operation_failed(
+                operation=operation,
+                reason="Operation succeeded but returned no data",
+                suggestions=["Check database consistency", "Verify repository implementation"],
+            )
+
+        return result
 
     # --- CRUD Operations ---
 
@@ -67,9 +108,10 @@ class CampaignService:
         Returns:
             DomainResult with created campaign data.
         """
-        # Validate name is not empty
-        if not name or not name.strip():
-            return DomainError.validation_error("Campaign name cannot be empty")
+        # Normalize and validate name
+        name = name.strip() if name else ""
+        if not name:
+            return DomainError.validation_error("Campaign name cannot be empty or whitespace")
 
         result = self.campaign_repo.create_campaign(
             {
@@ -82,7 +124,18 @@ class CampaignService:
         )
 
         if result.is_success and result.data:
-            return DomainSuccess.create(data=result.data.to_dict())
+            campaign_data = result.data.to_dict()
+
+            # Generate hints if hint generator is available
+            if self._hint_generator:
+                hints = self._hint_generator.post_campaign_create(
+                    campaign_id=campaign_data["id"],
+                    campaign_name=campaign_data["name"],
+                )
+                hint_data = self._hint_generator.format_for_response(hints)
+                campaign_data.update(hint_data)
+
+            return DomainSuccess.create(data=campaign_data)
         return result
 
     def get_campaign(self, campaign_id: str) -> DomainResult[Dict[str, Any]]:
@@ -123,7 +176,19 @@ class CampaignService:
 
     def get_progress_summary(self, campaign_id: str) -> DomainResult[Dict[str, Any]]:
         """Get lightweight progress summary for a campaign."""
-        return self.campaign_repo.get_progress_summary(campaign_id)
+        result = self.campaign_repo.get_progress_summary(campaign_id)
+
+        if result.is_success and result.data and self._hint_generator:
+            progress_data = result.data
+            hints = self._hint_generator.post_campaign_progress(
+                campaign_id=campaign_id,
+                progress_data=progress_data,
+            )
+            hint_data = self._hint_generator.format_for_response(hints)
+            progress_data.update(hint_data)
+            return DomainSuccess.create(data=progress_data)
+
+        return result
 
     def get_campaign_with_tasks(
         self, campaign_id: str, include_task_details: bool = True
@@ -156,13 +221,28 @@ class CampaignService:
 
         task_dto = result.data
         if task_dto is None:
-            return DomainSuccess.create(
-                data={
-                    "task": None,
-                    "campaign_progress": None,
-                    "message": "No actionable tasks found. All tasks may be blocked or completed.",
-                }
-            )
+            # Get progress for hints even when no task found
+            progress_result = self.campaign_repo.get_progress_summary(campaign_id)
+            progress_data = progress_result.data if progress_result.is_success else None
+
+            response_data: Dict[str, Any] = {
+                "task": None,
+                "campaign_progress": progress_data,
+                "message": "No actionable tasks found. All tasks may be blocked or completed.",
+            }
+
+            # Generate hints for no actionable task scenario
+            if self._hint_generator:
+                hints = self._hint_generator.actionable_task_hints(
+                    task_data=None,
+                    campaign_id=campaign_id,
+                    campaign_progress=progress_data,
+                    no_actionable=True,
+                )
+                hint_data = self._hint_generator.format_for_response(hints)
+                response_data.update(hint_data)
+
+            return DomainSuccess.create(data=response_data)
 
         # Get task details
         task_data = task_dto.to_dict()
@@ -184,15 +264,27 @@ class CampaignService:
 
         # Get campaign progress
         progress_result = self.campaign_repo.get_progress_summary(campaign_id)
+        progress_data = progress_result.data if progress_result.is_success else None
 
-        return DomainSuccess.create(
-            data={
-                "task": task_data,
-                "dependencies_met": True,
-                "campaign_progress": progress_result.data if progress_result.is_success else None,
-                "context_depth": context_depth,
-            }
-        )
+        response_data: Dict[str, Any] = {
+            "task": task_data,
+            "dependencies_met": True,
+            "campaign_progress": progress_data,
+            "context_depth": context_depth,
+        }
+
+        # Generate hints for found actionable task
+        if self._hint_generator:
+            hints = self._hint_generator.actionable_task_hints(
+                task_data=task_data,
+                campaign_id=campaign_id,
+                campaign_progress=progress_data,
+                no_actionable=False,
+            )
+            hint_data = self._hint_generator.format_for_response(hints)
+            response_data.update(hint_data)
+
+        return DomainSuccess.create(data=response_data)
 
     def get_all_actionable_tasks(
         self, campaign_id: str, max_results: int = 10, context_depth: str = "basic"
@@ -307,6 +399,9 @@ class CampaignService:
                 "metadata": {"research_type": research_type},
             }
         )
+        entity_result = self._validate_result_data(
+            entity_result, "create campaign research entity"
+        )
         if entity_result.is_failure:
             return entity_result
 
@@ -359,10 +454,18 @@ class CampaignService:
             return assoc_result
 
         research_items = []
+        failed_entities = []
         for assoc in assoc_result.data or []:
             # Get the entity
             entity_result = self.memory_entity_repo.get(assoc.memory_entity_id)
             if entity_result.is_failure:
+                failed_entities.append(
+                    {"entity_id": assoc.memory_entity_id, "error": entity_result.error_message}
+                )
+                logger.warning(
+                    f"Failed to retrieve research entity {assoc.memory_entity_id} "
+                    f"for campaign {campaign_id}: {entity_result.error_message}"
+                )
                 continue
 
             entity = entity_result.data
@@ -383,6 +486,16 @@ class CampaignService:
                     "order_index": assoc.order_index,
                     "created_at": entity.created_at.isoformat() if entity.created_at else None,
                 }
+            )
+
+        if failed_entities:
+            return DomainSuccess.create(
+                data=research_items,
+                suggestions=[
+                    f"Warning: {len(failed_entities)} research items could not be retrieved",
+                    "Some research data may be incomplete or corrupted",
+                    "Consider running database integrity check",
+                ],
             )
 
         return DomainSuccess.create(data=research_items)
