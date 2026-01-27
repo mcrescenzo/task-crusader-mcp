@@ -29,6 +29,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
+    # Core MCP server
     "mcp>=1.0.0,<2.0.0",
     "sqlalchemy>=2.0.0,<3.0.0",
     "pydantic>=2.6.0,<2.12.0",
@@ -36,21 +37,18 @@ dependencies = [
     "alembic>=1.13.0,<2.0.0",
     "anyio>=4.0.0,<5.0.0",
     "PyYAML>=6.0.0,<7.0.0",
+    # Full-featured by default (CLI + TUI)
+    "textual>=0.50.0",
+    "typer>=0.16.0",
+    "rich>=14.0.0",
 ]
 
 [project.optional-dependencies]
-tui = [
-    "textual>=0.50.0",
-]
-cli = [
-    "typer>=0.16.0",
-    "rich>=14.0.0",
-]
-all = [
-    "textual>=0.50.0",
-    "typer>=0.16.0",
-    "rich>=14.0.0",
-]
+# These extras are now no-ops (base includes everything)
+# Kept for backwards compatibility and documentation
+tui = []
+cli = []
+all = []
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",

@@ -18,7 +18,7 @@ try:
     from textual.binding import Binding
     from textual.widgets import Footer, Header
 except ImportError:
-    print("TUI requires textual. Install with: pip install task-crusade-mcp[tui]")
+    print("TUI requires textual. Install with: pip install task-crusader-mcp[tui]")
     sys.exit(1)
 
 from task_crusade_mcp.tui.screens.main import CampaignTaskPane

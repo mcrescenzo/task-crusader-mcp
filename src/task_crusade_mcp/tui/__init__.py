@@ -24,7 +24,7 @@ def main() -> None:
     try:
         from textual.app import App  # noqa: F401
     except ImportError:
-        print("TUI requires textual. Install with: pip install task-crusade-mcp[tui]")
+        print("TUI requires textual. Install with: pip install task-crusader-mcp[tui]")
         sys.exit(1)
 
     from task_crusade_mcp.tui.app import CrusaderTUI

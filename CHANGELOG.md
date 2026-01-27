@@ -44,10 +44,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependency injection via ServiceFactory
 - Comprehensive error handling with DomainResult pattern
 
+## [0.1.1] - 2026-01-26
+
+### Changed
+- Default installation now includes all features (CLI, TUI, MCP server)
+- Simplified installation documentation - single `pip install` command
+
+### Fixed
+- Updated error messages to show correct package name (task-crusader-mcp)
+- Fixed MCP server name from "task-crusade-mcp" to "task-crusader-mcp"
+
 ## [0.1.0] - 2026-01-26
 
 ### Added
 - Initial public release
 
-[Unreleased]: https://github.com/mcrescenzo/task-crusader-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mcrescenzo/task-crusader-mcp/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/mcrescenzo/task-crusader-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mcrescenzo/task-crusader-mcp/releases/tag/v0.1.0

@@ -13,29 +13,16 @@ Task Crusade is a campaign and task management system designed for AI coding ass
 
 ## Installation
 
-### Basic Installation (MCP Server only)
-
 ```bash
 pip install task-crusader-mcp
 ```
 
-### With CLI
+Task Crusader installs with all features by default:
+- **MCP Server**: Core campaign/task management for AI assistants
+- **CLI**: Command-line interface (`crusader` command)
+- **TUI**: Terminal user interface (`crusader-tui` command)
 
-```bash
-pip install task-crusader-mcp[cli]
-```
-
-### With TUI
-
-```bash
-pip install task-crusader-mcp[tui]
-```
-
-### Full Installation
-
-```bash
-pip install task-crusader-mcp[all]
-```
+Advanced users needing minimal installs can use `pip install --no-deps task-crusader-mcp` and manually specify dependencies.
 
 ## Quick Start
 

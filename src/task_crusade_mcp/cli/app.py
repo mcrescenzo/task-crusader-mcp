@@ -6,7 +6,7 @@ try:
     from rich.table import Table
 except ImportError as e:
     raise ImportError(
-        "CLI requires typer and rich. Install with: pip install task-crusade-mcp[cli]"
+        "CLI requires typer and rich. Install with: pip install task-crusader-mcp[cli]"
     ) from e
 
 from typing import Optional

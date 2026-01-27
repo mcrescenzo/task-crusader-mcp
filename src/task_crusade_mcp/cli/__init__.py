@@ -12,7 +12,7 @@ def main() -> None:
         app()
     except ImportError as e:
         if "typer" in str(e).lower() or "rich" in str(e).lower():
-            print("CLI requires typer and rich. Install with: pip install task-crusade-mcp[cli]")
+            print("CLI requires typer and rich. Install with: pip install task-crusader-mcp[cli]")
             sys.exit(1)
         raise
 

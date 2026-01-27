@@ -44,7 +44,7 @@ class CrusaderMCPServer:
         """Initialize the Crusader MCP server."""
         # Create MCP Server instance
         self._server = Server(
-            name="task-crusade-mcp",
+            name="task-crusader-mcp",
             version="0.1.0",
             instructions="""Task Crusade - Your AI coding assistant's quest companion
 
