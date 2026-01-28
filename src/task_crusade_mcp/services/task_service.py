@@ -1246,7 +1246,6 @@ class TaskService:
             return task_result
 
         task_dto = task_result.data
-        task_data = task_dto.to_dict()
 
         # Get upstream dependencies (tasks this task depends on)
         upstream: List[Dict[str, Any]] = []
@@ -1519,9 +1518,8 @@ class TaskService:
         blocking_deps = []
         for dep_id in task_dto.dependencies or []:
             dep_result = self.task_repo.get(dep_id)
-            if dep_result.is_success and dep_result.data:
-                if dep_result.data.status != "done":
-                    blocking_deps.append(
+            if dep_result.is_success and dep_result.data and dep_result.data.status != "done":
+                blocking_deps.append(
                         {
                             "id": dep_id,
                             "title": dep_result.data.title,

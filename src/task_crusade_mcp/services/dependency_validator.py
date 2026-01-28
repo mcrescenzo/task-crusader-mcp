@@ -135,9 +135,8 @@ class DependencyValidator:
 
         # Start DFS from each unvisited node
         for task in self.tasks:
-            if colors[task.temp_id] == 0:
-                if dfs(task.temp_id):
-                    break  # Stop after first cycle found
+            if colors[task.temp_id] == 0 and dfs(task.temp_id):
+                break  # Stop after first cycle found
 
         return errors
 

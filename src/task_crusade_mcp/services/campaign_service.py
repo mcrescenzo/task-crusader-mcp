@@ -24,6 +24,7 @@ from task_crusade_mcp.domain.entities.result_types import (
 )
 
 if TYPE_CHECKING:
+    from task_crusade_mcp.domain.entities.campaign_spec import CampaignSpec
     from task_crusade_mcp.services.hint_generator import HintGenerator
 
 from task_crusade_mcp.domain.entities.hint import CampaignHealthInfo, CampaignSetupStage
@@ -822,7 +823,6 @@ class CampaignService:
             - temp_id_to_uuid: Mapping of temp_ids to actual UUIDs
             - summary: Creation summary statistics
         """
-        from task_crusade_mcp.domain.entities.campaign_spec import CampaignSpec
         from task_crusade_mcp.services.dependency_validator import DependencyValidator
 
         # Step 1: Validate the dependency graph
@@ -1360,19 +1360,19 @@ class CampaignService:
         task_map = {t.id: t for t in tasks}
         dependencies = {t.id: t.dependencies or [] for t in tasks}
 
-        WHITE, GRAY, BLACK = 0, 1, 2
-        color = {t.id: WHITE for t in tasks}
+        unvisited, visiting, visited = 0, 1, 2
+        color = {t.id: unvisited for t in tasks}
         path: List[str] = []
 
         def dfs(task_id: str) -> Optional[str]:
-            color[task_id] = GRAY
+            color[task_id] = visiting
             path.append(task_id)
 
             for dep_id in dependencies.get(task_id, []):
                 if dep_id not in color:
                     continue  # Invalid reference, handled elsewhere
 
-                if color[dep_id] == GRAY:
+                if color[dep_id] == visiting:
                     # Found cycle - build cycle string
                     cycle_start = path.index(dep_id)
                     cycle_tasks = path[cycle_start:] + [dep_id]
@@ -1382,17 +1382,17 @@ class CampaignService:
                     ]
                     return " -> ".join(cycle_names)
 
-                if color[dep_id] == WHITE:
+                if color[dep_id] == unvisited:
                     result = dfs(dep_id)
                     if result:
                         return result
 
             path.pop()
-            color[task_id] = BLACK
+            color[task_id] = visited
             return None
 
         for task_id in color:
-            if color[task_id] == WHITE:
+            if color[task_id] == unvisited:
                 result = dfs(task_id)
                 if result:
                     return True, result

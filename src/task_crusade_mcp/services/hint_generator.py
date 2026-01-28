@@ -973,9 +973,8 @@ class HintGenerator:
             )
 
         # Priority 3: Missing research (only for inspection context)
-        if context == "inspection" and not completeness_info.has_research:
-            # Only add if we haven't hit max hints yet
-            if len(hints) < 2:
+        # Only add if we haven't hit max hints yet
+        if context == "inspection" and not completeness_info.has_research and len(hints) < 2:
                 hints.append(
                     Hint(
                         category=HintCategory.QUALITY,
