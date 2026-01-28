@@ -75,6 +75,7 @@ Issues = "https://github.com/mcrescenzo/task-crusader-mcp/issues"
 [tool.setuptools_scm]
 write_to = "src/task_crusade_mcp/_version.py"
 fallback_version = "0.1.0.dev0"
+local_scheme = "no-local-version"
 
 [tool.setuptools.packages.find]
 where = ["src"]
