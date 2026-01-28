@@ -434,7 +434,7 @@ class TaskDetailWidget(VerticalScroll):
 
         research_by_type: dict[str, list[dict[str, Any]]] = {}
         for item in research:
-            item_type = item.get("association_type", "general")
+            item_type = item.get("type", "general")
             if item_type not in research_by_type:
                 research_by_type[item_type] = []
             research_by_type[item_type].append(item)
@@ -445,7 +445,7 @@ class TaskDetailWidget(VerticalScroll):
             await self.mount(Static(type_header, classes="task-detail-item-header"))
 
             for item in items:
-                notes = item.get("notes", "")
+                notes = item.get("content", "")
                 if notes:
                     await self.mount(Static(notes, classes="task-detail-item", markup=False))
 
@@ -464,7 +464,7 @@ class TaskDetailWidget(VerticalScroll):
         for note in notes:
             note_type = note.get("note_type", "general")
             created_at = note.get("created_at", "")
-            content = note.get("notes", "")
+            content = note.get("content", "")
 
             date_str = ""
             if created_at:
@@ -509,12 +509,9 @@ class TaskDetailWidget(VerticalScroll):
         }
 
         for step in steps:
-            entity = step.get("entity", {})
-            metadata = entity.get("metadata", {}) if entity else {}
-
-            step_type = metadata.get("step_type", "verify")
-            status = metadata.get("status", "pending")
-            content = step.get("notes", "") or entity.get("name", "")
+            step_type = step.get("step_type", "verify")
+            status = step.get("test_status", "pending")
+            content = step.get("content", "")
 
             status_icon = step_status_icons.get(status, "○")
             step_style = step_type_styles.get(step_type, "white")
