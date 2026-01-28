@@ -26,6 +26,8 @@ from task_crusade_mcp.domain.entities.result_types import (
 if TYPE_CHECKING:
     from task_crusade_mcp.services.hint_generator import HintGenerator
 
+from task_crusade_mcp.domain.entities.hint import CampaignHealthInfo, CampaignSetupStage
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,6 +89,162 @@ class CampaignService:
             )
 
         return result
+
+    def _build_campaign_health_info(
+        self,
+        campaign_id: str,
+        campaign_name: str,
+    ) -> Optional[CampaignHealthInfo]:
+        """
+        Build CampaignHealthInfo for quality hints.
+
+        Analyzes all tasks to determine campaign health metrics.
+
+        Args:
+            campaign_id: Campaign UUID
+            campaign_name: Campaign name
+
+        Returns:
+            CampaignHealthInfo or None if campaign has no tasks
+        """
+        # Get all tasks
+        tasks_result = self.task_repo.list(filters={"campaign_id": campaign_id})
+        if tasks_result.is_failure:
+            return None
+
+        tasks = tasks_result.data or []
+
+        if not tasks:
+            return CampaignHealthInfo(
+                campaign_id=campaign_id,
+                campaign_name=campaign_name,
+                total_tasks=0,
+                tasks_without_criteria=0,
+                tasks_without_testing=0,
+                first_task_without_criteria_id=None,
+                first_task_without_testing_id=None,
+                tasks_complete=0,
+                tasks_in_progress=0,
+                tasks_blocked=0,
+                tasks_pending=0,
+            )
+
+        # Analyze task quality
+        tasks_without_criteria = 0
+        tasks_without_testing = 0
+        first_task_without_criteria_id: Optional[str] = None
+        first_task_without_testing_id: Optional[str] = None
+        tasks_complete = 0
+        tasks_in_progress = 0
+        tasks_blocked = 0
+        tasks_pending = 0
+
+        for task in tasks:
+            # Count by status
+            if task.status == "done":
+                tasks_complete += 1
+            elif task.status == "in-progress":
+                tasks_in_progress += 1
+            elif task.status == "blocked":
+                tasks_blocked += 1
+            elif task.status == "pending":
+                tasks_pending += 1
+
+            # Check for acceptance criteria
+            criteria_result = self._get_task_criteria(task.id)
+            criteria = criteria_result.data if criteria_result.is_success else []
+            if not criteria:
+                tasks_without_criteria += 1
+                if first_task_without_criteria_id is None:
+                    first_task_without_criteria_id = task.id
+
+            # Check for testing steps
+            testing_result = self._get_task_testing_steps(task.id)
+            testing = testing_result.data if testing_result.is_success else []
+            if not testing:
+                tasks_without_testing += 1
+                if first_task_without_testing_id is None:
+                    first_task_without_testing_id = task.id
+
+        return CampaignHealthInfo(
+            campaign_id=campaign_id,
+            campaign_name=campaign_name,
+            total_tasks=len(tasks),
+            tasks_without_criteria=tasks_without_criteria,
+            tasks_without_testing=tasks_without_testing,
+            first_task_without_criteria_id=first_task_without_criteria_id,
+            first_task_without_testing_id=first_task_without_testing_id,
+            tasks_complete=tasks_complete,
+            tasks_in_progress=tasks_in_progress,
+            tasks_blocked=tasks_blocked,
+            tasks_pending=tasks_pending,
+        )
+
+    def _get_task_testing_steps(self, task_id: str) -> DomainResult[List[Dict[str, Any]]]:
+        """Get testing steps for a task."""
+        assoc_result = self.memory_association_repo.list_by_task(
+            task_id, association_type="testing_step"
+        )
+        if assoc_result.is_failure:
+            return DomainSuccess.create(data=[])
+
+        steps = []
+        for assoc in assoc_result.data or []:
+            entity_result = self.memory_entity_repo.get(assoc.memory_entity_id)
+            if entity_result.is_failure:
+                continue
+
+            entity = entity_result.data
+            observations = entity.observations
+            content = observations[0] if observations else ""
+            step_type = entity.metadata.get("step_type", "verify")
+
+            steps.append(
+                {
+                    "id": entity.id,
+                    "content": content,
+                    "step_type": step_type,
+                    "order_index": assoc.order_index,
+                }
+            )
+
+        return DomainSuccess.create(data=steps)
+
+    def _get_campaign_setup_stage(
+        self,
+        health_info: CampaignHealthInfo,
+    ) -> CampaignSetupStage:
+        """
+        Determine current campaign setup stage.
+
+        Args:
+            health_info: CampaignHealthInfo with campaign metrics
+
+        Returns:
+            CampaignSetupStage representing current progress
+        """
+        # No tasks -> CREATED
+        if health_info.total_tasks == 0:
+            return CampaignSetupStage.CREATED
+
+        # All tasks complete -> COMPLETED
+        if health_info.tasks_complete == health_info.total_tasks:
+            return CampaignSetupStage.COMPLETED
+
+        # Some tasks in progress or done -> EXECUTING
+        if health_info.tasks_in_progress > 0 or health_info.tasks_complete > 0:
+            return CampaignSetupStage.EXECUTING
+
+        # Tasks exist but missing criteria -> TASKS_ADDED
+        if health_info.tasks_without_criteria > 0:
+            return CampaignSetupStage.TASKS_ADDED
+
+        # All have criteria but missing testing -> CRITERIA_DEFINED
+        if health_info.tasks_without_testing > 0:
+            return CampaignSetupStage.CRITERIA_DEFINED
+
+        # All tasks have criteria and testing -> TESTING_PLANNED (ready)
+        return CampaignSetupStage.TESTING_PLANNED
 
     # --- CRUD Operations ---
 
@@ -905,14 +1063,14 @@ class CampaignService:
     ) -> DomainResult[Dict[str, Any]]:
         """
         Get comprehensive campaign overview including progress, recent activity,
-        and actionable tasks.
+        actionable tasks, and quality hints.
 
         Args:
             campaign_id: Campaign UUID.
 
         Returns:
             DomainResult with overview data including progress, recent tasks,
-            and next actions.
+            next actions, and setup/health hints.
         """
         # Verify campaign exists
         campaign_result = self.campaign_repo.get(campaign_id)
@@ -961,6 +1119,50 @@ class CampaignService:
                 "research_count": len(research_items),
             },
         }
+
+        # Generate quality and setup hints
+        if self._hint_generator:
+            # Build campaign health info
+            health_info = self._build_campaign_health_info(
+                campaign_id=campaign_id,
+                campaign_name=campaign_dto.name,
+            )
+
+            if health_info:
+                # Add health score to summary
+                result_data["summary"]["health_score"] = health_info.health_score
+                result_data["summary"]["tasks_without_criteria"] = (
+                    health_info.tasks_without_criteria
+                )
+                result_data["summary"]["tasks_without_testing"] = (
+                    health_info.tasks_without_testing
+                )
+
+                # Get setup stage
+                setup_stage = self._get_campaign_setup_stage(health_info)
+                result_data["setup_stage"] = setup_stage.value
+
+                # Generate health hints
+                health_hints = self._hint_generator.campaign_health_hints(
+                    health_info=health_info,
+                    context="overview",
+                )
+
+                # Generate setup progress hints
+                setup_hints = self._hint_generator.campaign_setup_progress_hints(
+                    campaign_id=campaign_id,
+                    campaign_name=campaign_dto.name,
+                    setup_stage=setup_stage,
+                    health_info=health_info,
+                )
+
+                # Merge hints (setup hints first as they're more actionable)
+                all_hints = setup_hints.hints + health_hints.hints
+                from task_crusade_mcp.domain.entities.hint import HintCollection
+
+                combined_hints = HintCollection(hints=all_hints)
+                hint_data = self._hint_generator.format_for_response(combined_hints)
+                result_data.update(hint_data)
 
         return DomainSuccess.create(data=result_data)
 
@@ -1052,7 +1254,7 @@ class CampaignService:
             campaign_id: Campaign UUID.
 
         Returns:
-            DomainResult with readiness status and any issues found.
+            DomainResult with readiness status, issues found, and actionable hints.
         """
         # Verify campaign exists
         campaign_result = self.campaign_repo.get(campaign_id)
@@ -1098,16 +1300,26 @@ class CampaignService:
         if actionable_count == 0 and tasks:
             warnings.append("No actionable tasks - all tasks may be blocked")
 
-        # Check for tasks without acceptance criteria
+        # Build campaign health info for quality analysis
+        health_info = self._build_campaign_health_info(
+            campaign_id=campaign_id,
+            campaign_name=campaign_dto.name,
+        )
+
         tasks_without_criteria = 0
-        for task in tasks:
-            criteria = self._get_task_criteria(task.id)
-            if not criteria:
-                tasks_without_criteria += 1
+        tasks_without_testing = 0
+        if health_info:
+            tasks_without_criteria = health_info.tasks_without_criteria
+            tasks_without_testing = health_info.tasks_without_testing
 
         if tasks_without_criteria > 0:
             warnings.append(
                 f"{tasks_without_criteria} tasks have no acceptance criteria"
+            )
+
+        if tasks_without_testing > 0:
+            warnings.append(
+                f"{tasks_without_testing} tasks have no testing strategy"
             )
 
         is_ready = len(issues) == 0
@@ -1121,8 +1333,22 @@ class CampaignService:
                 "total_tasks": len(tasks),
                 "actionable_tasks": actionable_count,
                 "tasks_without_criteria": tasks_without_criteria,
+                "tasks_without_testing": tasks_without_testing,
             },
         }
+
+        # Add health score if available
+        if health_info:
+            result_data["summary"]["health_score"] = health_info.health_score
+
+        # Generate actionable hints for fixing issues
+        if self._hint_generator and health_info:
+            hints = self._hint_generator.campaign_health_hints(
+                health_info=health_info,
+                context="validate",
+            )
+            hint_data = self._hint_generator.format_for_response(hints)
+            result_data.update(hint_data)
 
         return DomainSuccess.create(data=result_data)
 

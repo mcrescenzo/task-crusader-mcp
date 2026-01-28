@@ -27,6 +27,8 @@ from task_crusade_mcp.domain.entities.result_types import (
 if TYPE_CHECKING:
     from task_crusade_mcp.services.hint_generator import HintGenerator
 
+from task_crusade_mcp.domain.entities.hint import TaskCompletenessInfo
+
 logger = logging.getLogger(__name__)
 
 
@@ -89,6 +91,40 @@ class TaskService:
 
         return result
 
+    def _build_task_completeness_info(
+        self,
+        task_id: str,
+        task_title: str,
+        task_status: str,
+    ) -> TaskCompletenessInfo:
+        """
+        Build TaskCompletenessInfo for quality hints.
+
+        Fetches task memory data to determine completeness.
+
+        Args:
+            task_id: Task UUID
+            task_title: Task title
+            task_status: Task status
+
+        Returns:
+            TaskCompletenessInfo populated with task quality data
+        """
+        criteria = self._get_task_criteria(task_id)
+        testing_steps = self._get_task_testing_steps(task_id)
+        research = self._get_task_research(task_id)
+
+        return TaskCompletenessInfo(
+            task_id=task_id,
+            task_title=task_title,
+            task_status=task_status,
+            has_acceptance_criteria=len(criteria) > 0,
+            criteria_count=len(criteria),
+            has_testing_strategy=len(testing_steps) > 0,
+            testing_steps_count=len(testing_steps),
+            has_research=len(research) > 0,
+        )
+
     # --- CRUD Operations ---
 
     def create_task(
@@ -127,9 +163,7 @@ class TaskService:
         # Normalize and validate title
         title = title.strip() if title else ""
         if not title:
-            return DomainError.validation_error(
-                "Task title cannot be empty or whitespace"
-            )
+            return DomainError.validation_error("Task title cannot be empty or whitespace")
 
         # Verify campaign exists
         campaign_result = self.campaign_repo.get(campaign_id)
@@ -144,9 +178,7 @@ class TaskService:
                 if dep_result.is_failure:
                     invalid_deps.append(dep_id)
             if invalid_deps:
-                return DomainError.validation_error(
-                    f"Invalid dependency task IDs: {invalid_deps}"
-                )
+                return DomainError.validation_error(f"Invalid dependency task IDs: {invalid_deps}")
 
         # Create task
         result = self.task_repo.create(
@@ -209,13 +241,15 @@ class TaskService:
         """
         Get task by ID with full details.
 
-        Returns task data including acceptance criteria, research, and notes.
+        Returns task data including acceptance criteria, research, notes,
+        and quality hints for task inspection.
         """
         result = self.task_repo.get(task_id)
         if result.is_failure:
             return result
 
-        task_data = result.data.to_dict()
+        task_dto = result.data
+        task_data = task_dto.to_dict()
 
         # Get acceptance criteria
         criteria = self._get_task_criteria(task_id)
@@ -232,6 +266,25 @@ class TaskService:
         # Get testing steps
         testing_steps = self._get_task_testing_steps(task_id)
         task_data["testing_steps"] = testing_steps
+
+        # Generate quality hints for task inspection
+        if self._hint_generator:
+            completeness_info = TaskCompletenessInfo(
+                task_id=task_id,
+                task_title=task_dto.title,
+                task_status=task_dto.status,
+                has_acceptance_criteria=len(criteria) > 0,
+                criteria_count=len(criteria),
+                has_testing_strategy=len(testing_steps) > 0,
+                testing_steps_count=len(testing_steps),
+                has_research=len(research) > 0,
+            )
+            hints = self._hint_generator.task_quality_hints(
+                completeness_info=completeness_info,
+                context="inspection",
+            )
+            hint_data = self._hint_generator.format_for_response(hints)
+            task_data.update(hint_data)
 
         return DomainSuccess.create(data=task_data)
 
@@ -259,30 +312,67 @@ class TaskService:
         return DomainSuccess.create(data=[t.to_dict() for t in result.data or []])
 
     def update_task(self, task_id: str, **updates: Any) -> DomainResult[Dict[str, Any]]:
-        """Update a task."""
-        # Get old task state for status change detection
+        """
+        Update a task.
+
+        Supports three modes for dependency management (choose ONE per call):
+        - dependencies: REPLACE all dependencies with this list
+        - add_dependencies: ADD task IDs to existing dependencies
+        - remove_dependencies: REMOVE task IDs from existing dependencies
+        """
+        # Get old task state for status change detection and dependency operations
         old_task_result = self.task_repo.get(task_id)
-        old_status = None
-        if old_task_result.is_success and old_task_result.data:
-            old_status = old_task_result.data.status
+        if old_task_result.is_failure:
+            return DomainError.not_found("Task", task_id)
+
+        old_task = old_task_result.data
+        old_status = old_task.status
+
+        # Handle dependency operation modes
+        dependencies = updates.get("dependencies")
+        add_dependencies = updates.pop("add_dependencies", None)
+        remove_dependencies = updates.pop("remove_dependencies", None)
+
+        # Validate only one dependency operation is provided
+        dep_ops = [
+            dependencies is not None,
+            add_dependencies is not None,
+            remove_dependencies is not None,
+        ]
+        if sum(dep_ops) > 1:
+            return DomainError.validation_error(
+                "Only one of 'dependencies', 'add_dependencies', or "
+                "'remove_dependencies' can be provided per call"
+            )
+
+        # Handle add_dependencies: append to existing
+        if add_dependencies is not None:
+            existing = list(old_task.dependencies or [])
+            # Add new deps, avoiding duplicates
+            for dep_id in add_dependencies:
+                if dep_id not in existing:
+                    existing.append(dep_id)
+            updates["dependencies"] = existing
+            dependencies = existing
+
+        # Handle remove_dependencies: remove from existing
+        if remove_dependencies is not None:
+            existing = list(old_task.dependencies or [])
+            updates["dependencies"] = [d for d in existing if d not in remove_dependencies]
+            dependencies = updates["dependencies"]
 
         # Validate dependencies if being updated
-        dependencies = updates.get("dependencies")
         if dependencies is not None:
             invalid_deps = []
             for dep_id in dependencies:
                 # Prevent self-dependency
                 if dep_id == task_id:
-                    return DomainError.validation_error(
-                        f"Task cannot depend on itself: {task_id}"
-                    )
+                    return DomainError.validation_error(f"Task cannot depend on itself: {task_id}")
                 dep_result = self.task_repo.get(dep_id)
                 if dep_result.is_failure:
                     invalid_deps.append(dep_id)
             if invalid_deps:
-                return DomainError.validation_error(
-                    f"Invalid dependency task IDs: {invalid_deps}"
-                )
+                return DomainError.validation_error(f"Invalid dependency task IDs: {invalid_deps}")
 
         result = self.task_repo.update(task_id, updates)
         if result.is_failure:
@@ -310,11 +400,13 @@ class TaskService:
                             dep_data = dep_result.data
                             # Only include non-completed tasks as blockers
                             if dep_data.status != "done":
-                                blocking_tasks.append({
-                                    "id": dep_data.id,
-                                    "title": dep_data.title,
-                                    "status": dep_data.status,
-                                })
+                                blocking_tasks.append(
+                                    {
+                                        "id": dep_data.id,
+                                        "title": dep_data.title,
+                                        "status": dep_data.status,
+                                    }
+                                )
 
             hints = self._hint_generator.post_task_status_change(
                 task_id=task_id,
@@ -1055,9 +1147,7 @@ class TaskService:
 
         return DomainSuccess.create(data=result_data)
 
-    def get_task_stats(
-        self, campaign_id: Optional[str] = None
-    ) -> DomainResult[Dict[str, Any]]:
+    def get_task_stats(self, campaign_id: Optional[str] = None) -> DomainResult[Dict[str, Any]]:
         """
         Get aggregate task statistics.
 
@@ -1118,11 +1208,7 @@ class TaskService:
         completion_rate = (completed / total * 100) if total > 0 else 0.0
 
         # Calculate criteria completion rate
-        criteria_rate = (
-            (total_criteria_met / total_criteria * 100)
-            if total_criteria > 0
-            else 0.0
-        )
+        criteria_rate = (total_criteria_met / total_criteria * 100) if total_criteria > 0 else 0.0
 
         result_data: Dict[str, Any] = {
             "total_tasks": total,
@@ -1180,23 +1266,21 @@ class TaskService:
 
         # Get downstream dependents (tasks that depend on this task)
         campaign_id = task_dto.campaign_id
-        all_tasks_result = self.task_repo.list(
-            filters={"campaign_id": campaign_id}
-        )
+        all_tasks_result = self.task_repo.list(filters={"campaign_id": campaign_id})
         downstream: List[Dict[str, Any]] = []
         if all_tasks_result.is_success:
             for other_task in all_tasks_result.data or []:
                 if task_id in (other_task.dependencies or []):
-                    downstream.append({
-                        "id": other_task.id,
-                        "title": other_task.title,
-                        "status": other_task.status,
-                    })
+                    downstream.append(
+                        {
+                            "id": other_task.id,
+                            "title": other_task.title,
+                            "status": other_task.status,
+                        }
+                    )
 
         is_blocked = len(blocking) > 0
-        is_blocking_others = (
-            task_dto.status != "done" and len(downstream) > 0
-        )
+        is_blocking_others = task_dto.status != "done" and len(downstream) > 0
 
         result_data: Dict[str, Any] = {
             "task": {
@@ -1255,17 +1339,21 @@ class TaskService:
         for task_id in task_ids:
             result = self.task_repo.update(task_id, updates)
             if result.is_success and result.data:
-                updated.append({
-                    "id": task_id,
-                    "title": result.data.title,
-                    "status": result.data.status,
-                    "priority": result.data.priority,
-                })
+                updated.append(
+                    {
+                        "id": task_id,
+                        "title": result.data.title,
+                        "status": result.data.status,
+                        "priority": result.data.priority,
+                    }
+                )
             else:
-                failed.append({
-                    "id": task_id,
-                    "error": result.error_message or "Update failed",
-                })
+                failed.append(
+                    {
+                        "id": task_id,
+                        "error": result.error_message or "Update failed",
+                    }
+                )
 
         result_data: Dict[str, Any] = {
             "updated_count": len(updated),
@@ -1398,9 +1486,7 @@ class TaskService:
             acceptance_criteria=criteria,
         )
 
-    def complete_task_with_workflow(
-        self, task_id: str
-    ) -> DomainResult[Dict[str, Any]]:
+    def complete_task_with_workflow(self, task_id: str) -> DomainResult[Dict[str, Any]]:
         """
         Complete a task with full validation.
 
@@ -1435,11 +1521,13 @@ class TaskService:
             dep_result = self.task_repo.get(dep_id)
             if dep_result.is_success and dep_result.data:
                 if dep_result.data.status != "done":
-                    blocking_deps.append({
-                        "id": dep_id,
-                        "title": dep_result.data.title,
-                        "status": dep_result.data.status,
-                    })
+                    blocking_deps.append(
+                        {
+                            "id": dep_id,
+                            "title": dep_result.data.title,
+                            "status": dep_result.data.status,
+                        }
+                    )
 
         if blocking_deps:
             return DomainError.business_rule_violation(
@@ -1447,9 +1535,11 @@ class TaskService:
                 message=f"Cannot complete: {len(blocking_deps)} blocking dependencies",
                 details={"blocking_dependencies": blocking_deps},
                 suggestions=[
-                    f"Complete task '{blocking_deps[0]['title']}' first"
-                    if blocking_deps
-                    else "Complete blocking dependencies"
+                    (
+                        f"Complete task '{blocking_deps[0]['title']}' first"
+                        if blocking_deps
+                        else "Complete blocking dependencies"
+                    )
                 ],
             )
 
@@ -1463,9 +1553,11 @@ class TaskService:
                 message=f"Cannot complete: {len(unmet_criteria)} unmet criteria",
                 details={"unmet_criteria": unmet_criteria},
                 suggestions=[
-                    f"Mark criterion as met: {unmet_criteria[0].get('content', '')[:50]}"
-                    if unmet_criteria
-                    else "Mark all criteria as met"
+                    (
+                        f"Mark criterion as met: {unmet_criteria[0].get('content', '')[:50]}"
+                        if unmet_criteria
+                        else "Mark all criteria as met"
+                    )
                 ],
             )
 
@@ -1483,9 +1575,7 @@ class TaskService:
         research = self._get_task_research(task_id)
         return DomainSuccess.create(data={"task_id": task_id, "research": research})
 
-    def get_task_research(
-        self, task_id: str, research_id: str
-    ) -> DomainResult[Dict[str, Any]]:
+    def get_task_research(self, task_id: str, research_id: str) -> DomainResult[Dict[str, Any]]:
         """Get a single research item."""
         task_result = self.task_repo.get(task_id)
         if task_result.is_failure:
@@ -1500,12 +1590,14 @@ class TaskService:
         content = observations[0] if observations else ""
         research_type = entity.metadata.get("research_type", "findings")
 
-        return DomainSuccess.create(data={
-            "id": entity.id,
-            "task_id": task_id,
-            "content": content,
-            "type": research_type,
-        })
+        return DomainSuccess.create(
+            data={
+                "id": entity.id,
+                "task_id": task_id,
+                "content": content,
+                "type": research_type,
+            }
+        )
 
     def update_task_research(
         self,
@@ -1538,9 +1630,7 @@ class TaskService:
 
         return self.get_task_research(task_id, research_id)
 
-    def delete_task_research(
-        self, task_id: str, research_id: str
-    ) -> DomainResult[Dict[str, Any]]:
+    def delete_task_research(self, task_id: str, research_id: str) -> DomainResult[Dict[str, Any]]:
         """Delete a research item."""
         current = self.get_task_research(task_id, research_id)
         if current.is_failure:
@@ -1550,11 +1640,13 @@ class TaskService:
         if delete_result.is_failure:
             return delete_result
 
-        return DomainSuccess.create(data={
-            "deleted": True,
-            "research_id": research_id,
-            "task_id": task_id,
-        })
+        return DomainSuccess.create(
+            data={
+                "deleted": True,
+                "research_id": research_id,
+                "task_id": task_id,
+            }
+        )
 
     def reorder_task_research(
         self, task_id: str, research_id: str, new_order: int
@@ -1578,9 +1670,7 @@ class TaskService:
 
     # --- Task Implementation Notes CRUD Operations ---
 
-    def list_implementation_notes(
-        self, task_id: str
-    ) -> DomainResult[Dict[str, Any]]:
+    def list_implementation_notes(self, task_id: str) -> DomainResult[Dict[str, Any]]:
         """List all implementation notes for a task."""
         task_result = self.task_repo.get(task_id)
         if task_result.is_failure:
@@ -1589,9 +1679,7 @@ class TaskService:
         notes = self._get_task_notes(task_id)
         return DomainSuccess.create(data={"task_id": task_id, "notes": notes})
 
-    def get_implementation_note(
-        self, task_id: str, note_id: str
-    ) -> DomainResult[Dict[str, Any]]:
+    def get_implementation_note(self, task_id: str, note_id: str) -> DomainResult[Dict[str, Any]]:
         """Get a single implementation note."""
         task_result = self.task_repo.get(task_id)
         if task_result.is_failure:
@@ -1605,11 +1693,13 @@ class TaskService:
         observations = entity.observations
         content = observations[0] if observations else ""
 
-        return DomainSuccess.create(data={
-            "id": entity.id,
-            "task_id": task_id,
-            "content": content,
-        })
+        return DomainSuccess.create(
+            data={
+                "id": entity.id,
+                "task_id": task_id,
+                "content": content,
+            }
+        )
 
     def update_implementation_note(
         self, task_id: str, note_id: str, content: str
@@ -1619,9 +1709,7 @@ class TaskService:
         if current.is_failure:
             return current
 
-        update_result = self.memory_entity_repo.update(
-            note_id, {"observations": [content]}
-        )
+        update_result = self.memory_entity_repo.update(note_id, {"observations": [content]})
         if update_result.is_failure:
             return update_result
 
@@ -1639,11 +1727,13 @@ class TaskService:
         if delete_result.is_failure:
             return delete_result
 
-        return DomainSuccess.create(data={
-            "deleted": True,
-            "note_id": note_id,
-            "task_id": task_id,
-        })
+        return DomainSuccess.create(
+            data={
+                "deleted": True,
+                "note_id": note_id,
+                "task_id": task_id,
+            }
+        )
 
     def reorder_implementation_notes(
         self, task_id: str, note_id: str, new_order: int
@@ -1667,19 +1757,19 @@ class TaskService:
 
     # --- Task Acceptance Criteria CRUD Operations ---
 
-    def list_acceptance_criteria(
-        self, task_id: str
-    ) -> DomainResult[Dict[str, Any]]:
+    def list_acceptance_criteria(self, task_id: str) -> DomainResult[Dict[str, Any]]:
         """List all acceptance criteria for a task."""
         task_result = self.task_repo.get(task_id)
         if task_result.is_failure:
             return task_result
 
         criteria = self._get_task_criteria(task_id)
-        return DomainSuccess.create(data={
-            "task_id": task_id,
-            "criteria": criteria,
-        })
+        return DomainSuccess.create(
+            data={
+                "task_id": task_id,
+                "criteria": criteria,
+            }
+        )
 
     def get_acceptance_criterion(
         self, task_id: str, criterion_id: str
@@ -1698,12 +1788,14 @@ class TaskService:
         content = observations[0] if observations else ""
         is_met = entity.metadata.get("is_met", False)
 
-        return DomainSuccess.create(data={
-            "id": entity.id,
-            "task_id": task_id,
-            "content": content,
-            "is_met": is_met,
-        })
+        return DomainSuccess.create(
+            data={
+                "id": entity.id,
+                "task_id": task_id,
+                "content": content,
+                "is_met": is_met,
+            }
+        )
 
     def update_acceptance_criterion(
         self, task_id: str, criterion_id: str, content: str
@@ -1713,9 +1805,7 @@ class TaskService:
         if current.is_failure:
             return current
 
-        update_result = self.memory_entity_repo.update(
-            criterion_id, {"observations": [content]}
-        )
+        update_result = self.memory_entity_repo.update(criterion_id, {"observations": [content]})
         if update_result.is_failure:
             return update_result
 
@@ -1733,11 +1823,13 @@ class TaskService:
         if delete_result.is_failure:
             return delete_result
 
-        return DomainSuccess.create(data={
-            "deleted": True,
-            "criterion_id": criterion_id,
-            "task_id": task_id,
-        })
+        return DomainSuccess.create(
+            data={
+                "deleted": True,
+                "criterion_id": criterion_id,
+                "task_id": task_id,
+            }
+        )
 
     def reorder_acceptance_criteria(
         self, task_id: str, criterion_id: str, new_order: int
@@ -1770,9 +1862,7 @@ class TaskService:
         steps = self._get_task_testing_steps(task_id)
         return DomainSuccess.create(data={"task_id": task_id, "steps": steps})
 
-    def get_testing_step(
-        self, task_id: str, step_id: str
-    ) -> DomainResult[Dict[str, Any]]:
+    def get_testing_step(self, task_id: str, step_id: str) -> DomainResult[Dict[str, Any]]:
         """Get a single testing step."""
         task_result = self.task_repo.get(task_id)
         if task_result.is_failure:
@@ -1788,13 +1878,15 @@ class TaskService:
         step_type = entity.metadata.get("step_type", "verify")
         test_status = entity.metadata.get("test_status", "pending")
 
-        return DomainSuccess.create(data={
-            "id": entity.id,
-            "task_id": task_id,
-            "content": content,
-            "step_type": step_type,
-            "test_status": test_status,
-        })
+        return DomainSuccess.create(
+            data={
+                "id": entity.id,
+                "task_id": task_id,
+                "content": content,
+                "step_type": step_type,
+                "test_status": test_status,
+            }
+        )
 
     def update_testing_step(
         self,
@@ -1828,9 +1920,7 @@ class TaskService:
 
         return self.get_testing_step(task_id, step_id)
 
-    def delete_testing_step(
-        self, task_id: str, step_id: str
-    ) -> DomainResult[Dict[str, Any]]:
+    def delete_testing_step(self, task_id: str, step_id: str) -> DomainResult[Dict[str, Any]]:
         """Delete a testing step."""
         current = self.get_testing_step(task_id, step_id)
         if current.is_failure:
@@ -1840,27 +1930,23 @@ class TaskService:
         if delete_result.is_failure:
             return delete_result
 
-        return DomainSuccess.create(data={
-            "deleted": True,
-            "step_id": step_id,
-            "task_id": task_id,
-        })
+        return DomainSuccess.create(
+            data={
+                "deleted": True,
+                "step_id": step_id,
+                "task_id": task_id,
+            }
+        )
 
-    def mark_testing_step_passed(
-        self, task_id: str, step_id: str
-    ) -> DomainResult[Dict[str, Any]]:
+    def mark_testing_step_passed(self, task_id: str, step_id: str) -> DomainResult[Dict[str, Any]]:
         """Mark a testing step as passed."""
         return self._update_testing_step_status(task_id, step_id, "passed")
 
-    def mark_testing_step_failed(
-        self, task_id: str, step_id: str
-    ) -> DomainResult[Dict[str, Any]]:
+    def mark_testing_step_failed(self, task_id: str, step_id: str) -> DomainResult[Dict[str, Any]]:
         """Mark a testing step as failed."""
         return self._update_testing_step_status(task_id, step_id, "failed")
 
-    def mark_testing_step_skipped(
-        self, task_id: str, step_id: str
-    ) -> DomainResult[Dict[str, Any]]:
+    def mark_testing_step_skipped(self, task_id: str, step_id: str) -> DomainResult[Dict[str, Any]]:
         """Mark a testing step as skipped."""
         return self._update_testing_step_status(task_id, step_id, "skipped")
 
@@ -1879,9 +1965,7 @@ class TaskService:
         metadata = entity_result.data.metadata or {}
         metadata["test_status"] = status
 
-        update_result = self.memory_entity_repo.update(
-            step_id, {"metadata": metadata}
-        )
+        update_result = self.memory_entity_repo.update(step_id, {"metadata": metadata})
         if update_result.is_failure:
             return update_result
 

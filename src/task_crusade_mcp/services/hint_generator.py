@@ -8,7 +8,14 @@ This is a lightweight implementation focused on actionable guidance.
 import logging
 from typing import Any, Dict, List, Optional
 
-from task_crusade_mcp.domain.entities.hint import Hint, HintCategory, HintCollection
+from task_crusade_mcp.domain.entities.hint import (
+    CampaignHealthInfo,
+    CampaignSetupStage,
+    Hint,
+    HintCategory,
+    HintCollection,
+    TaskCompletenessInfo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -892,6 +899,325 @@ class HintGenerator:
                 )
             ]
         )
+
+    # --- Quality & Health Hints ---
+
+    def task_quality_hints(
+        self,
+        completeness_info: TaskCompletenessInfo,
+        context: str = "inspection",
+    ) -> HintCollection:
+        """
+        Generate hints about task quality/completeness.
+
+        Provides guidance on missing task elements like acceptance criteria,
+        testing strategy, and research.
+
+        Args:
+            completeness_info: TaskCompletenessInfo with task quality data
+            context: Hint context - controls filtering:
+                - "inspection": Full quality hints (viewing task details)
+                - "update": Only hint if task is in-progress
+                - "actionable": Only warn about missing criteria (critical)
+
+        Returns:
+            HintCollection with quality improvement hints (max 2)
+        """
+        if not self.enabled:
+            return self._empty()
+
+        # Skip completed tasks - no quality hints needed
+        if completeness_info.task_status == "done":
+            return self._empty()
+
+        # Context filtering
+        if context == "update" and completeness_info.task_status != "in-progress":
+            return self._empty()
+
+        hints: List[Hint] = []
+        task_id = completeness_info.task_id
+        task_title = completeness_info.task_title
+
+        # Priority 1: Missing acceptance criteria (critical)
+        if not completeness_info.has_acceptance_criteria:
+            hints.append(
+                Hint(
+                    category=HintCategory.QUALITY,
+                    message=f"Task '{task_title}' has no acceptance criteria. "
+                    "Define completion requirements.",
+                    tool_call=f"task_acceptance_criteria_add(task_id='{task_id}', content='...')",
+                    context={
+                        "task_id": task_id,
+                        "missing": "acceptance_criteria",
+                    },
+                )
+            )
+
+        # For actionable context, only show criteria warning
+        if context == "actionable":
+            return HintCollection(hints=hints[:1])
+
+        # Priority 2: Missing testing strategy (only if criteria exist)
+        if completeness_info.has_acceptance_criteria and not completeness_info.has_testing_strategy:
+            hints.append(
+                Hint(
+                    category=HintCategory.QUALITY,
+                    message=f"Task '{task_title}' has criteria but no testing strategy. "
+                    "Plan verification steps.",
+                    tool_call=f"task_testing_strategy_add(task_id='{task_id}', content='...')",
+                    context={
+                        "task_id": task_id,
+                        "missing": "testing_strategy",
+                    },
+                )
+            )
+
+        # Priority 3: Missing research (only for inspection context)
+        if context == "inspection" and not completeness_info.has_research:
+            # Only add if we haven't hit max hints yet
+            if len(hints) < 2:
+                hints.append(
+                    Hint(
+                        category=HintCategory.QUALITY,
+                        message=f"Task '{task_title}' has no research notes. "
+                        "Consider documenting findings.",
+                        tool_call=f"task_research_add(task_id='{task_id}', content='...')",
+                        context={
+                            "task_id": task_id,
+                            "missing": "research",
+                        },
+                    )
+                )
+
+        # Noise reduction: max 2 quality hints
+        return HintCollection(hints=hints[:2])
+
+    def campaign_health_hints(
+        self,
+        health_info: CampaignHealthInfo,
+        context: str = "overview",
+    ) -> HintCollection:
+        """
+        Generate hints about campaign health and completeness.
+
+        Provides guidance on tasks that need quality improvements
+        and overall campaign readiness.
+
+        Args:
+            health_info: CampaignHealthInfo with campaign health data
+            context: Hint context:
+                - "overview": Include health score, general guidance
+                - "validate": Actionable fixes for readiness issues
+
+        Returns:
+            HintCollection with campaign health hints
+        """
+        if not self.enabled:
+            return self._empty()
+
+        hints: List[Hint] = []
+        campaign_id = health_info.campaign_id
+
+        # No tasks -> hint to add tasks
+        if health_info.total_tasks == 0:
+            hints.append(
+                Hint(
+                    category=HintCategory.QUALITY,
+                    message="Campaign has no tasks. Add tasks to define the work.",
+                    tool_call=f"task_create(campaign_id='{campaign_id}', title='...')",
+                    context={"campaign_id": campaign_id},
+                )
+            )
+            return HintCollection(hints=hints)
+
+        # Tasks without criteria
+        if health_info.tasks_without_criteria > 0:
+            count = health_info.tasks_without_criteria
+            total = health_info.total_tasks
+            first_task_id = health_info.first_task_without_criteria_id
+
+            tool_call = None
+            if first_task_id:
+                tool_call = f"task_show(task_id='{first_task_id}')"
+
+            hints.append(
+                Hint(
+                    category=HintCategory.QUALITY,
+                    message=f"{count} of {total} tasks have no acceptance criteria.",
+                    tool_call=tool_call,
+                    context={
+                        "campaign_id": campaign_id,
+                        "tasks_without_criteria": count,
+                        "first_task_id": first_task_id,
+                    },
+                )
+            )
+
+        # Tasks without testing (only if criteria are OK)
+        if health_info.tasks_without_criteria == 0 and health_info.tasks_without_testing > 0:
+            count = health_info.tasks_without_testing
+            total = health_info.total_tasks
+            first_task_id = health_info.first_task_without_testing_id
+
+            tool_call = None
+            if first_task_id:
+                tool_call = f"task_show(task_id='{first_task_id}')"
+
+            hints.append(
+                Hint(
+                    category=HintCategory.QUALITY,
+                    message=f"{count} of {total} tasks have no testing strategy.",
+                    tool_call=tool_call,
+                    context={
+                        "campaign_id": campaign_id,
+                        "tasks_without_testing": count,
+                        "first_task_id": first_task_id,
+                    },
+                )
+            )
+
+        # Include health score for overview context
+        if context == "overview" and health_info.health_score < 100:
+            hints.append(
+                Hint(
+                    category=HintCategory.PROGRESS,
+                    message=f"Campaign health: {health_info.health_score}%. "
+                    "Improve task definitions for better quality.",
+                    tool_call=None,
+                    context={
+                        "campaign_id": campaign_id,
+                        "health_score": health_info.health_score,
+                    },
+                )
+            )
+
+        return HintCollection(hints=hints)
+
+    def campaign_setup_progress_hints(
+        self,
+        campaign_id: str,
+        campaign_name: str,
+        setup_stage: CampaignSetupStage,
+        health_info: Optional[CampaignHealthInfo] = None,
+    ) -> HintCollection:
+        """
+        Generate hints based on campaign setup stage.
+
+        Provides stage-specific guidance to help users progress
+        through campaign setup: create -> add tasks -> add criteria ->
+        add testing -> execute -> complete.
+
+        Args:
+            campaign_id: Campaign UUID
+            campaign_name: Campaign name for display
+            setup_stage: Current CampaignSetupStage
+            health_info: Optional CampaignHealthInfo for context
+
+        Returns:
+            HintCollection with setup progress hints
+        """
+        if not self.enabled:
+            return self._empty()
+
+        hints: List[Hint] = []
+
+        # Stage-specific hints
+        if setup_stage == CampaignSetupStage.CREATED:
+            hints.append(
+                Hint(
+                    category=HintCategory.WORKFLOW,
+                    message=f"Campaign '{campaign_name}' created. Next: Add tasks.",
+                    tool_call=f"task_create(campaign_id='{campaign_id}', title='...')",
+                    context={
+                        "campaign_id": campaign_id,
+                        "stage": setup_stage.value,
+                    },
+                )
+            )
+        elif setup_stage == CampaignSetupStage.TASKS_ADDED:
+            first_task_id = (
+                health_info.first_task_without_criteria_id
+                if health_info and health_info.first_task_without_criteria_id
+                else None
+            )
+            tool_call = (
+                f"task_show(task_id='{first_task_id}')"
+                if first_task_id
+                else f"campaign_get_next_actionable_task(campaign_id='{campaign_id}')"
+            )
+            hints.append(
+                Hint(
+                    category=HintCategory.WORKFLOW,
+                    message="Tasks added. Next: Define acceptance criteria for each task.",
+                    tool_call=tool_call,
+                    context={
+                        "campaign_id": campaign_id,
+                        "stage": setup_stage.value,
+                        "first_task_id": first_task_id,
+                    },
+                )
+            )
+        elif setup_stage == CampaignSetupStage.CRITERIA_DEFINED:
+            first_task_id = (
+                health_info.first_task_without_testing_id
+                if health_info and health_info.first_task_without_testing_id
+                else None
+            )
+            tool_call = (
+                f"task_show(task_id='{first_task_id}')"
+                if first_task_id
+                else f"campaign_get_next_actionable_task(campaign_id='{campaign_id}')"
+            )
+            hints.append(
+                Hint(
+                    category=HintCategory.WORKFLOW,
+                    message="Criteria defined. Next: Add testing strategy for each task.",
+                    tool_call=tool_call,
+                    context={
+                        "campaign_id": campaign_id,
+                        "stage": setup_stage.value,
+                        "first_task_id": first_task_id,
+                    },
+                )
+            )
+        elif setup_stage == CampaignSetupStage.TESTING_PLANNED:
+            hints.append(
+                Hint(
+                    category=HintCategory.WORKFLOW,
+                    message="Campaign ready for execution. Start the first task.",
+                    tool_call=f"campaign_get_next_actionable_task(campaign_id='{campaign_id}')",
+                    context={
+                        "campaign_id": campaign_id,
+                        "stage": setup_stage.value,
+                    },
+                )
+            )
+        elif setup_stage == CampaignSetupStage.EXECUTING:
+            hints.append(
+                Hint(
+                    category=HintCategory.PROGRESS,
+                    message="Campaign in progress. Continue with the next actionable task.",
+                    tool_call=f"campaign_get_next_actionable_task(campaign_id='{campaign_id}')",
+                    context={
+                        "campaign_id": campaign_id,
+                        "stage": setup_stage.value,
+                    },
+                )
+            )
+        elif setup_stage == CampaignSetupStage.COMPLETED:
+            hints.append(
+                Hint(
+                    category=HintCategory.COMPLETION,
+                    message=f"Campaign '{campaign_name}' complete! All tasks done.",
+                    tool_call=f"campaign_update(campaign_id='{campaign_id}', status='completed')",
+                    context={
+                        "campaign_id": campaign_id,
+                        "stage": setup_stage.value,
+                    },
+                )
+            )
+
+        return HintCollection(hints=hints)
 
     # --- Utility Methods ---
 

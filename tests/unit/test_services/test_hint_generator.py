@@ -2,7 +2,14 @@
 
 import pytest
 
-from task_crusade_mcp.domain.entities.hint import Hint, HintCategory, HintCollection
+from task_crusade_mcp.domain.entities.hint import (
+    CampaignHealthInfo,
+    CampaignSetupStage,
+    Hint,
+    HintCategory,
+    HintCollection,
+    TaskCompletenessInfo,
+)
 from task_crusade_mcp.services.hint_generator import HintGenerator
 
 
@@ -807,3 +814,756 @@ class TestHintGenerator:
             campaign_progress=None,
         )
         assert result.is_empty()
+
+
+class TestTaskQualityHints:
+    """Tests for task_quality_hints method."""
+
+    @pytest.fixture
+    def generator(self):
+        """Create a HintGenerator instance."""
+        return HintGenerator(enabled=True)
+
+    @pytest.fixture
+    def disabled_generator(self):
+        """Create a disabled HintGenerator instance."""
+        return HintGenerator(enabled=False)
+
+    def test_task_quality_hints_disabled(self, disabled_generator):
+        """Test disabled generator returns empty for task quality hints."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test Task",
+            task_status="pending",
+            has_acceptance_criteria=False,
+            criteria_count=0,
+            has_testing_strategy=False,
+            testing_steps_count=0,
+            has_research=False,
+        )
+        result = disabled_generator.task_quality_hints(info)
+        assert result.is_empty()
+
+    def test_task_quality_hints_completed_task_no_hints(self, generator):
+        """Test that completed tasks get no quality hints."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test Task",
+            task_status="done",
+            has_acceptance_criteria=False,
+            criteria_count=0,
+            has_testing_strategy=False,
+            testing_steps_count=0,
+            has_research=False,
+        )
+        result = generator.task_quality_hints(info)
+        assert result.is_empty()
+
+    def test_task_quality_hints_missing_criteria(self, generator):
+        """Test hints when task is missing acceptance criteria."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test Task",
+            task_status="pending",
+            has_acceptance_criteria=False,
+            criteria_count=0,
+            has_testing_strategy=True,
+            testing_steps_count=2,
+            has_research=True,
+        )
+        result = generator.task_quality_hints(info)
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.QUALITY
+        assert "no acceptance criteria" in hint.message
+        assert "task_acceptance_criteria_add" in hint.tool_call
+        assert hint.context["missing"] == "acceptance_criteria"
+
+    def test_task_quality_hints_missing_testing(self, generator):
+        """Test hints when task has criteria but missing testing strategy."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test Task",
+            task_status="pending",
+            has_acceptance_criteria=True,
+            criteria_count=3,
+            has_testing_strategy=False,
+            testing_steps_count=0,
+            has_research=True,
+        )
+        result = generator.task_quality_hints(info)
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.QUALITY
+        assert "no testing strategy" in hint.message
+        assert "task_testing_strategy_add" in hint.tool_call
+        assert hint.context["missing"] == "testing_strategy"
+
+    def test_task_quality_hints_missing_research_inspection(self, generator):
+        """Test hints for missing research in inspection context."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test Task",
+            task_status="pending",
+            has_acceptance_criteria=True,
+            criteria_count=3,
+            has_testing_strategy=True,
+            testing_steps_count=2,
+            has_research=False,
+        )
+        result = generator.task_quality_hints(info, context="inspection")
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.QUALITY
+        assert "no research" in hint.message
+        assert "task_research_add" in hint.tool_call
+        assert hint.context["missing"] == "research"
+
+    def test_task_quality_hints_multiple_missing_max_two(self, generator):
+        """Test that max 2 quality hints are returned."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test Task",
+            task_status="pending",
+            has_acceptance_criteria=False,
+            criteria_count=0,
+            has_testing_strategy=False,
+            testing_steps_count=0,
+            has_research=False,
+        )
+        result = generator.task_quality_hints(info, context="inspection")
+
+        # Should get max 2 hints even though 3 things are missing
+        assert len(result) <= 2
+        # First should be criteria (highest priority)
+        assert result.hints[0].context["missing"] == "acceptance_criteria"
+
+    def test_task_quality_hints_actionable_context_only_criteria(self, generator):
+        """Test actionable context only shows criteria warnings."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test Task",
+            task_status="pending",
+            has_acceptance_criteria=False,
+            criteria_count=0,
+            has_testing_strategy=False,
+            testing_steps_count=0,
+            has_research=False,
+        )
+        result = generator.task_quality_hints(info, context="actionable")
+
+        # Only 1 hint for criteria in actionable context
+        assert len(result) == 1
+        assert result.hints[0].context["missing"] == "acceptance_criteria"
+
+    def test_task_quality_hints_update_context_only_in_progress(self, generator):
+        """Test update context only hints for in-progress tasks."""
+        # Pending task - no hints in update context
+        info_pending = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test Task",
+            task_status="pending",
+            has_acceptance_criteria=False,
+            criteria_count=0,
+            has_testing_strategy=False,
+            testing_steps_count=0,
+            has_research=False,
+        )
+        result = generator.task_quality_hints(info_pending, context="update")
+        assert result.is_empty()
+
+        # In-progress task - hints in update context
+        info_in_progress = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test Task",
+            task_status="in-progress",
+            has_acceptance_criteria=False,
+            criteria_count=0,
+            has_testing_strategy=False,
+            testing_steps_count=0,
+            has_research=False,
+        )
+        result = generator.task_quality_hints(info_in_progress, context="update")
+        assert not result.is_empty()
+
+    def test_task_quality_hints_complete_task_no_hints(self, generator):
+        """Test that fully complete task gets no quality hints."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test Task",
+            task_status="pending",
+            has_acceptance_criteria=True,
+            criteria_count=3,
+            has_testing_strategy=True,
+            testing_steps_count=2,
+            has_research=True,
+        )
+        result = generator.task_quality_hints(info, context="inspection")
+
+        assert result.is_empty()
+
+
+class TestCampaignHealthHints:
+    """Tests for campaign_health_hints method."""
+
+    @pytest.fixture
+    def generator(self):
+        """Create a HintGenerator instance."""
+        return HintGenerator(enabled=True)
+
+    @pytest.fixture
+    def disabled_generator(self):
+        """Create a disabled HintGenerator instance."""
+        return HintGenerator(enabled=False)
+
+    def test_campaign_health_hints_disabled(self, disabled_generator):
+        """Test disabled generator returns empty for campaign health hints."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            total_tasks=0,
+            tasks_without_criteria=0,
+            tasks_without_testing=0,
+            first_task_without_criteria_id=None,
+            first_task_without_testing_id=None,
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=0,
+        )
+        result = disabled_generator.campaign_health_hints(info)
+        assert result.is_empty()
+
+    def test_campaign_health_hints_no_tasks(self, generator):
+        """Test hints when campaign has no tasks."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            total_tasks=0,
+            tasks_without_criteria=0,
+            tasks_without_testing=0,
+            first_task_without_criteria_id=None,
+            first_task_without_testing_id=None,
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=0,
+        )
+        result = generator.campaign_health_hints(info)
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.QUALITY
+        assert "no tasks" in hint.message.lower()
+        assert "task_create" in hint.tool_call
+
+    def test_campaign_health_hints_tasks_without_criteria(self, generator):
+        """Test hints when tasks are missing criteria."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            total_tasks=5,
+            tasks_without_criteria=3,
+            tasks_without_testing=4,
+            first_task_without_criteria_id="task-first",
+            first_task_without_testing_id="task-first-test",
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=5,
+        )
+        result = generator.campaign_health_hints(info, context="overview")
+
+        # Should have criteria hint
+        criteria_hints = [h for h in result.hints if "criteria" in h.message.lower()]
+        assert len(criteria_hints) >= 1
+        hint = criteria_hints[0]
+        assert hint.category == HintCategory.QUALITY
+        assert "3 of 5" in hint.message
+        assert "task_show(task_id='task-first')" in hint.tool_call
+
+    def test_campaign_health_hints_tasks_without_testing_only(self, generator):
+        """Test hints when all have criteria but some missing testing."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            total_tasks=5,
+            tasks_without_criteria=0,
+            tasks_without_testing=2,
+            first_task_without_criteria_id=None,
+            first_task_without_testing_id="task-first-test",
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=5,
+        )
+        result = generator.campaign_health_hints(info, context="overview")
+
+        # Should have testing hint (no criteria hint since all have criteria)
+        testing_hints = [h for h in result.hints if "testing" in h.message.lower()]
+        assert len(testing_hints) >= 1
+        hint = testing_hints[0]
+        assert hint.category == HintCategory.QUALITY
+        assert "2 of 5" in hint.message
+        assert "task_show(task_id='task-first-test')" in hint.tool_call
+
+    def test_campaign_health_hints_health_score_overview(self, generator):
+        """Test health score hint in overview context."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            total_tasks=5,
+            tasks_without_criteria=2,
+            tasks_without_testing=3,
+            first_task_without_criteria_id="task-1",
+            first_task_without_testing_id="task-2",
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=5,
+        )
+        result = generator.campaign_health_hints(info, context="overview")
+
+        # Should include health score hint
+        health_hints = [h for h in result.hints if "health" in h.message.lower()]
+        assert len(health_hints) >= 1
+        # Health score should be included in context
+        assert health_hints[0].context.get("health_score") is not None
+
+    def test_campaign_health_hints_healthy_campaign(self, generator):
+        """Test no quality hints for healthy campaign."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            total_tasks=5,
+            tasks_without_criteria=0,
+            tasks_without_testing=0,
+            first_task_without_criteria_id=None,
+            first_task_without_testing_id=None,
+            tasks_complete=2,
+            tasks_in_progress=1,
+            tasks_blocked=0,
+            tasks_pending=2,
+        )
+        result = generator.campaign_health_hints(info, context="overview")
+
+        # Should not have quality hints (only maybe progress)
+        quality_hints = [h for h in result.hints if h.category == HintCategory.QUALITY]
+        assert len(quality_hints) == 0
+
+
+class TestCampaignSetupProgressHints:
+    """Tests for campaign_setup_progress_hints method."""
+
+    @pytest.fixture
+    def generator(self):
+        """Create a HintGenerator instance."""
+        return HintGenerator(enabled=True)
+
+    @pytest.fixture
+    def disabled_generator(self):
+        """Create a disabled HintGenerator instance."""
+        return HintGenerator(enabled=False)
+
+    def test_campaign_setup_progress_hints_disabled(self, disabled_generator):
+        """Test disabled generator returns empty for setup progress hints."""
+        result = disabled_generator.campaign_setup_progress_hints(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            setup_stage=CampaignSetupStage.CREATED,
+        )
+        assert result.is_empty()
+
+    def test_setup_stage_created(self, generator):
+        """Test hints for CREATED stage."""
+        result = generator.campaign_setup_progress_hints(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            setup_stage=CampaignSetupStage.CREATED,
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.WORKFLOW
+        assert "created" in hint.message.lower()
+        assert "Add tasks" in hint.message
+        assert "task_create(campaign_id='camp-1'" in hint.tool_call
+        assert hint.context["stage"] == "created"
+
+    def test_setup_stage_tasks_added(self, generator):
+        """Test hints for TASKS_ADDED stage."""
+        health_info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            total_tasks=3,
+            tasks_without_criteria=3,
+            tasks_without_testing=3,
+            first_task_without_criteria_id="task-first",
+            first_task_without_testing_id="task-first",
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=3,
+        )
+        result = generator.campaign_setup_progress_hints(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            setup_stage=CampaignSetupStage.TASKS_ADDED,
+            health_info=health_info,
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.WORKFLOW
+        assert "acceptance criteria" in hint.message.lower()
+        assert "task_show(task_id='task-first')" in hint.tool_call
+        assert hint.context["stage"] == "tasks_added"
+
+    def test_setup_stage_criteria_defined(self, generator):
+        """Test hints for CRITERIA_DEFINED stage."""
+        health_info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            total_tasks=3,
+            tasks_without_criteria=0,
+            tasks_without_testing=3,
+            first_task_without_criteria_id=None,
+            first_task_without_testing_id="task-first-test",
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=3,
+        )
+        result = generator.campaign_setup_progress_hints(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            setup_stage=CampaignSetupStage.CRITERIA_DEFINED,
+            health_info=health_info,
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.WORKFLOW
+        assert "testing strategy" in hint.message.lower()
+        assert "task_show(task_id='task-first-test')" in hint.tool_call
+        assert hint.context["stage"] == "criteria_defined"
+
+    def test_setup_stage_testing_planned(self, generator):
+        """Test hints for TESTING_PLANNED stage."""
+        result = generator.campaign_setup_progress_hints(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            setup_stage=CampaignSetupStage.TESTING_PLANNED,
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.WORKFLOW
+        assert "ready for execution" in hint.message.lower()
+        assert "campaign_get_next_actionable_task(campaign_id='camp-1')" in hint.tool_call
+        assert hint.context["stage"] == "testing_planned"
+
+    def test_setup_stage_executing(self, generator):
+        """Test hints for EXECUTING stage."""
+        result = generator.campaign_setup_progress_hints(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            setup_stage=CampaignSetupStage.EXECUTING,
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.PROGRESS
+        assert "in progress" in hint.message.lower()
+        assert "campaign_get_next_actionable_task(campaign_id='camp-1')" in hint.tool_call
+        assert hint.context["stage"] == "executing"
+
+    def test_setup_stage_completed(self, generator):
+        """Test hints for COMPLETED stage."""
+        result = generator.campaign_setup_progress_hints(
+            campaign_id="camp-1",
+            campaign_name="Test Campaign",
+            setup_stage=CampaignSetupStage.COMPLETED,
+        )
+
+        assert len(result) == 1
+        hint = result.hints[0]
+        assert hint.category == HintCategory.COMPLETION
+        assert "complete" in hint.message.lower()
+        assert "campaign_update(campaign_id='camp-1', status='completed')" in hint.tool_call
+        assert hint.context["stage"] == "completed"
+
+
+class TestHintCollectionPriorityWithQuality:
+    """Tests for HintCollection priority ordering including QUALITY category."""
+
+    def test_quality_hints_priority_after_workflow(self):
+        """Test that QUALITY hints are prioritized after WORKFLOW."""
+        collection = HintCollection(
+            hints=[
+                Hint(
+                    category=HintCategory.PROGRESS,
+                    message="Progress",
+                    tool_call="progress_tool()",
+                ),
+                Hint(
+                    category=HintCategory.QUALITY,
+                    message="Quality",
+                    tool_call="quality_tool()",
+                ),
+                Hint(
+                    category=HintCategory.COORDINATION,
+                    message="Coordination",
+                    tool_call="coord_tool()",
+                ),
+            ]
+        )
+
+        result = collection.get_primary_tool_call()
+        assert result == "quality_tool()"
+
+    def test_workflow_beats_quality(self):
+        """Test that WORKFLOW hints beat QUALITY hints."""
+        collection = HintCollection(
+            hints=[
+                Hint(
+                    category=HintCategory.QUALITY,
+                    message="Quality",
+                    tool_call="quality_tool()",
+                ),
+                Hint(
+                    category=HintCategory.WORKFLOW,
+                    message="Workflow",
+                    tool_call="workflow_tool()",
+                ),
+            ]
+        )
+
+        result = collection.get_primary_tool_call()
+        assert result == "workflow_tool()"
+
+    def test_quality_beats_coordination(self):
+        """Test that QUALITY hints beat COORDINATION hints."""
+        collection = HintCollection(
+            hints=[
+                Hint(
+                    category=HintCategory.COORDINATION,
+                    message="Coordination",
+                    tool_call="coord_tool()",
+                ),
+                Hint(
+                    category=HintCategory.QUALITY,
+                    message="Quality",
+                    tool_call="quality_tool()",
+                ),
+            ]
+        )
+
+        result = collection.get_primary_tool_call()
+        assert result == "quality_tool()"
+
+
+class TestTaskCompletenessInfoDataclass:
+    """Tests for TaskCompletenessInfo dataclass."""
+
+    def test_missing_items_none(self):
+        """Test missing_items when task is complete."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test",
+            task_status="pending",
+            has_acceptance_criteria=True,
+            criteria_count=3,
+            has_testing_strategy=True,
+            testing_steps_count=2,
+            has_research=True,
+        )
+        assert info.missing_items == []
+
+    def test_missing_items_all(self):
+        """Test missing_items when everything is missing."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test",
+            task_status="pending",
+            has_acceptance_criteria=False,
+            criteria_count=0,
+            has_testing_strategy=False,
+            testing_steps_count=0,
+            has_research=False,
+        )
+        assert info.missing_items == ["acceptance_criteria", "testing_strategy", "research"]
+
+    def test_is_complete_true(self):
+        """Test is_complete when task has criteria and testing."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test",
+            task_status="pending",
+            has_acceptance_criteria=True,
+            criteria_count=3,
+            has_testing_strategy=True,
+            testing_steps_count=2,
+            has_research=False,  # Research not required
+        )
+        assert info.is_complete is True
+
+    def test_is_complete_false(self):
+        """Test is_complete when missing criteria or testing."""
+        info = TaskCompletenessInfo(
+            task_id="task-1",
+            task_title="Test",
+            task_status="pending",
+            has_acceptance_criteria=True,
+            criteria_count=3,
+            has_testing_strategy=False,
+            testing_steps_count=0,
+            has_research=True,
+        )
+        assert info.is_complete is False
+
+
+class TestCampaignHealthInfoDataclass:
+    """Tests for CampaignHealthInfo dataclass."""
+
+    def test_is_ready_for_execution_true(self):
+        """Test is_ready_for_execution when all tasks have criteria."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test",
+            total_tasks=5,
+            tasks_without_criteria=0,
+            tasks_without_testing=2,
+            first_task_without_criteria_id=None,
+            first_task_without_testing_id="task-1",
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=5,
+        )
+        assert info.is_ready_for_execution is True
+
+    def test_is_ready_for_execution_false_no_tasks(self):
+        """Test is_ready_for_execution when no tasks."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test",
+            total_tasks=0,
+            tasks_without_criteria=0,
+            tasks_without_testing=0,
+            first_task_without_criteria_id=None,
+            first_task_without_testing_id=None,
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=0,
+        )
+        assert info.is_ready_for_execution is False
+
+    def test_is_ready_for_execution_false_missing_criteria(self):
+        """Test is_ready_for_execution when some tasks missing criteria."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test",
+            total_tasks=5,
+            tasks_without_criteria=2,
+            tasks_without_testing=3,
+            first_task_without_criteria_id="task-1",
+            first_task_without_testing_id="task-1",
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=5,
+        )
+        assert info.is_ready_for_execution is False
+
+    def test_health_score_perfect(self):
+        """Test health_score when all tasks have criteria and testing."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test",
+            total_tasks=5,
+            tasks_without_criteria=0,
+            tasks_without_testing=0,
+            first_task_without_criteria_id=None,
+            first_task_without_testing_id=None,
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=5,
+        )
+        assert info.health_score == 100.0
+
+    def test_health_score_partial(self):
+        """Test health_score with partial coverage."""
+        # 3 of 5 have criteria (60% of 60 = 36)
+        # 2 of 5 have testing (40% of 40 = 16)
+        # Total = 52
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test",
+            total_tasks=5,
+            tasks_without_criteria=2,  # 3 have criteria
+            tasks_without_testing=3,  # 2 have testing
+            first_task_without_criteria_id="task-1",
+            first_task_without_testing_id="task-1",
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=5,
+        )
+        assert info.health_score == 52.0
+
+    def test_health_score_no_tasks(self):
+        """Test health_score when no tasks."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test",
+            total_tasks=0,
+            tasks_without_criteria=0,
+            tasks_without_testing=0,
+            first_task_without_criteria_id=None,
+            first_task_without_testing_id=None,
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=0,
+        )
+        assert info.health_score == 0.0
+
+    def test_completion_rate(self):
+        """Test completion_rate calculation."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test",
+            total_tasks=5,
+            tasks_without_criteria=0,
+            tasks_without_testing=0,
+            first_task_without_criteria_id=None,
+            first_task_without_testing_id=None,
+            tasks_complete=3,
+            tasks_in_progress=1,
+            tasks_blocked=0,
+            tasks_pending=1,
+        )
+        assert info.completion_rate == 60.0
+
+    def test_completion_rate_no_tasks(self):
+        """Test completion_rate when no tasks."""
+        info = CampaignHealthInfo(
+            campaign_id="camp-1",
+            campaign_name="Test",
+            total_tasks=0,
+            tasks_without_criteria=0,
+            tasks_without_testing=0,
+            first_task_without_criteria_id=None,
+            first_task_without_testing_id=None,
+            tasks_complete=0,
+            tasks_in_progress=0,
+            tasks_blocked=0,
+            tasks_pending=0,
+        )
+        assert info.completion_rate == 0.0

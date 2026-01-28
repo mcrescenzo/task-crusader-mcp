@@ -166,14 +166,33 @@ Returns: Progress summary with task counts, completion rate, and current/next ta
             name="campaign_get_next_actionable_task",
             description="""Get the next actionable task with all dependencies met.
 
-Use this for sequential task processing. Returns the highest-priority pending or
-in-progress task with all dependencies in "done" status.
+WHEN TO USE THIS TOOL:
+- Sequential task processing (work on one task at a time)
+- Finding what to work on next
+- For parallel work, use campaign_get_all_actionable_tasks instead
+
+Returns the highest-priority pending or in-progress task where ALL
+dependencies have status="done". A task is "actionable" when:
+- Status is "pending" or "in-progress"
+- ALL tasks in its dependencies list have status="done"
+- Higher priority tasks are returned first
 
 IMPORTANT: Returns acceptance_criteria_details with IDs for marking criteria met.
 
 Parameters:
 - campaign_id (required): Campaign ID
-- context_depth (optional): Context level - "basic" (default) returns task data with acceptance criteria, "full" additionally includes research items and implementation notes
+- context_depth (optional): "basic" (default) returns task with acceptance criteria,
+                            "full" includes research items and implementation notes
+
+WORKFLOW:
+1. Call this to get next task
+2. task_update(task_id, status="in-progress")
+3. Work on the task
+4. task_acceptance_criteria_mark_met for each criterion
+5. task_complete(task_id)
+6. Repeat from step 1
+
+Related: campaign_get_all_actionable_tasks (parallel), campaign_get_progress_summary
 
 Returns: Next task with criteria, progress summary, and execution guidance.""",
             inputSchema={
@@ -304,8 +323,21 @@ Returns: List of research items.""",
             name="campaign_workflow_guide",
             description="""Get comprehensive workflow guidance.
 
-Call this first when starting to use the campaign/task system.
-Returns step-by-step guidance for planning, creation, and execution phases.""",
+WHEN TO USE THIS TOOL:
+- First time using the campaign/task system
+- Need a refresher on the recommended workflow
+- Unsure which tool to use for a specific operation
+
+Returns step-by-step guidance for planning, creation, and execution phases.
+
+KEY WORKFLOW SUMMARY:
+1. PLANNING: campaign_create_with_tasks (bulk) OR campaign_create + task_create
+2. VALIDATION: campaign_validate_readiness
+3. EXECUTION: campaign_get_next_actionable_task → task_update → work →
+   task_acceptance_criteria_mark_met → task_complete → repeat
+4. MONITORING: campaign_get_progress_summary, campaign_overview
+
+Related: campaign_create_with_tasks (recommended for new campaigns)""",
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -313,14 +345,20 @@ Returns step-by-step guidance for planning, creation, and execution phases.""",
         ),
         Tool(
             name="campaign_create_with_tasks",
-            description="""Create campaign and all tasks in one atomic operation.
+            description="""Create campaign AND all tasks in ONE atomic operation.
 
-Use this to set up a complete campaign with tasks, dependencies, acceptance
-criteria, and research items in a single call. All operations succeed or
-all fail (no partial state).
+*** USE THIS FOR BULK TASK CREATION ***
 
-Tasks can reference each other using temp_id for dependencies before UUIDs
-are assigned. Dependencies are validated for missing references and cycles.
+WHEN TO USE THIS TOOL:
+- Setting up a new campaign with multiple tasks
+- Creating tasks with interdependencies
+- Atomic setup: ALL succeed or ALL fail (no partial state)
+
+This is the RECOMMENDED way to create campaigns with tasks. Much faster
+than individual task_create calls and handles dependencies automatically.
+
+Tasks reference each other using temp_id for dependencies before UUIDs
+are assigned. Dependencies are validated for cycles and missing references.
 
 Parameters:
 - campaign_json (required): JSON string with campaign and tasks spec
@@ -335,21 +373,36 @@ JSON Format:
   },
   "tasks": [
     {
-      "temp_id": "task-1",
-      "title": "First Task",
+      "temp_id": "setup",
+      "title": "Setup environment",
       "dependencies": [],
-      "acceptance_criteria": ["criterion 1"]
+      "acceptance_criteria": ["criterion 1", "criterion 2"]
     },
     {
-      "temp_id": "task-2",
-      "title": "Second Task",
-      "dependencies": ["task-1"]
+      "temp_id": "implement",
+      "title": "Implement feature",
+      "dependencies": ["setup"],
+      "acceptance_criteria": ["All tests pass"]
+    },
+    {
+      "temp_id": "test",
+      "title": "Integration tests",
+      "dependencies": ["implement"]
     }
   ]
 }
 ```
 
-Returns: Campaign, tasks with temp_id mapping, and creation summary.""",
+DEPENDENCY RULES:
+- Use temp_id strings to reference other tasks in the same batch
+- Dependencies are validated: all referenced temp_ids must exist
+- Circular dependencies are detected and rejected
+- Task A depends on B means: A cannot start until B status = "done"
+
+Returns: Campaign with all tasks, temp_id → UUID mapping, creation summary.
+
+Related: campaign_create (without tasks), task_create (individual tasks),
+         campaign_validate_readiness (verify campaign before execution)""",
             inputSchema={
                 "type": "object",
                 "properties": {
