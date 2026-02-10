@@ -9,6 +9,8 @@ except ImportError as e:
         "CLI requires typer and rich. Install with: pip install task-crusader-mcp[cli]"
     ) from e
 
+import json
+import sys
 from typing import Optional
 
 from task_crusade_mcp.services import get_service_factory
@@ -113,6 +115,80 @@ def campaign_show(
                 console.print(f"  {status_icon}[/] {t['title']} ({t['status']})")
     else:
         console.print(f"[red]Error:[/red] {result.error_message}")
+        raise typer.Exit(1)
+
+
+# Campaign subcommand groups
+next_actionable_app = typer.Typer(help="Get next actionable task")
+campaign_app.add_typer(next_actionable_app, name="next-actionable")
+
+progress_app = typer.Typer(help="Campaign progress commands")
+campaign_app.add_typer(progress_app, name="progress")
+
+
+@next_actionable_app.command("task")
+def campaign_next_actionable_task(
+    campaign_id: str = typer.Argument(..., help="Campaign ID"),
+    context_depth: str = typer.Option("basic", "--context-depth", help="Context depth (basic/full)"),
+    format: str = typer.Option("text", "--format", "-f", help="Output format (text/json)"),
+) -> None:
+    """Get the next actionable task for a campaign."""
+    factory = get_service_factory()
+    service = factory.get_campaign_service()
+    result = service.get_next_actionable_task(campaign_id, context_depth=context_depth)
+
+    if result.is_success:
+        if format == "json":
+            json.dump({"success": True, "data": result.data}, sys.stdout, default=str)
+            sys.stdout.write("\n")
+        else:
+            data = result.data
+            task = data.get("task") if isinstance(data, dict) else None
+            if task:
+                console.print(f"\n[bold]Next Task:[/bold] {task.get('title', 'N/A')}")
+                console.print(f"ID: {task.get('id', 'N/A')}")
+                console.print(f"Priority: {task.get('priority', 'N/A')}")
+            else:
+                console.print("No actionable tasks available.")
+    else:
+        if format == "json":
+            json.dump({"success": False, "error": result.error_message}, sys.stdout, default=str)
+            sys.stdout.write("\n")
+        else:
+            console.print(f"[red]Error:[/red] {result.error_message}")
+        raise typer.Exit(1)
+
+
+@progress_app.command("summary")
+def campaign_progress_summary(
+    campaign_id: str = typer.Argument(..., help="Campaign ID"),
+    format: str = typer.Option("text", "--format", "-f", help="Output format (text/json)"),
+) -> None:
+    """Get campaign progress summary."""
+    factory = get_service_factory()
+    service = factory.get_campaign_service()
+    result = service.get_progress_summary(campaign_id)
+
+    if result.is_success:
+        if format == "json":
+            json.dump({"success": True, "data": result.data}, sys.stdout, default=str)
+            sys.stdout.write("\n")
+        else:
+            data = result.data
+            console.print(f"\n[bold]Campaign Progress[/bold]")
+            console.print(f"Campaign: {data.get('campaign_name', 'N/A')}")
+            console.print(f"Total Tasks: {data.get('total_tasks', 0)}")
+            tasks_by_status = data.get("tasks_by_status", {})
+            console.print(f"Done: {tasks_by_status.get('done', 0)}")
+            console.print(f"In Progress: {tasks_by_status.get('in-progress', 0)}")
+            console.print(f"Pending: {tasks_by_status.get('pending', 0)}")
+            console.print(f"Completion: {data.get('completion_rate', 0):.0f}%")
+    else:
+        if format == "json":
+            json.dump({"success": False, "error": result.error_message}, sys.stdout, default=str)
+            sys.stdout.write("\n")
+        else:
+            console.print(f"[red]Error:[/red] {result.error_message}")
         raise typer.Exit(1)
 
 

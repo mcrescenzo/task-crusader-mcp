@@ -16,6 +16,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import INTERNAL_ERROR, ErrorData, TextContent, Tool
 
 from task_crusade_mcp.database.orm_manager import get_orm_manager
+from task_crusade_mcp.server.error_sanitizer import sanitize_exception
 from task_crusade_mcp.server.service_executor import ServiceExecutor
 from task_crusade_mcp.server.tools import get_all_tools
 
@@ -46,12 +47,13 @@ class CrusaderMCPServer:
         self._server = Server(
             name="task-crusader-mcp",
             version="0.1.0",
-            instructions="""Task Crusade - Your AI coding assistant's quest companion
+            instructions="""OpenCode Tools - Task and Project Management System
 
 OVERVIEW:
-Task Crusade is a campaign and task management system designed for AI coding assistants.
-It helps organize work into campaigns (projects) and tasks with dependency tracking,
-acceptance criteria, and progress monitoring.
+OpenCode Tools is a comprehensive task and project management system with two core domains:
+
+1. CAMPAIGNS: Collections of related tasks for organizing work (projects, sprints, features)
+2. TASKS: Individual units of work with status tracking, dependencies, and rich metadata
 
 GETTING STARTED:
 
@@ -59,8 +61,9 @@ Basic Workflow:
 1. Create a campaign: campaign_create(name="My Project")
 2. Add tasks: task_create(title="Task 1", campaign_id="...")
 3. Add acceptance criteria: task_acceptance_criteria_add(task_id="...", content="...")
-4. Execute: Use the Task Execution Loop (see below)
-5. Track progress: campaign_get_progress_summary(campaign_id="...")
+4. Track progress: task_update(status="in-progress"), task_show
+5. Add details: task_research_add, task_implementation_notes_add, task_acceptance_criteria_add
+6. Complete work: task_acceptance_criteria_mark_met, task_complete(task_id)
 
 TASK EXECUTION LOOP:
 ```
@@ -72,23 +75,46 @@ while campaign not complete:
     5. task_complete(task_id) -> complete task
 ```
 
+KEY CONCEPTS:
+
+- Every task MUST belong to a campaign
+- Tasks can have: research, implementation notes, acceptance criteria, testing strategy
+- Dependencies use AND logic (all must complete before dependent task is actionable)
+- Use campaign_get_next_actionable_task to find tasks ready to work on
+
 TOOL CATEGORIES:
 
-Campaign Management:
+Campaign Management (21 tools):
 - campaign_create, campaign_list, campaign_show, campaign_update, campaign_delete
+- campaign_create_with_tasks, campaign_details, campaign_overview
 - campaign_get_progress_summary, campaign_get_next_actionable_task, campaign_get_all_actionable_tasks
-- campaign_research_add, campaign_research_list
+- campaign_get_state_snapshot, campaign_validate_readiness, campaign_renumber_tasks
+- campaign_workflow_guide
+- campaign_research_add, campaign_research_list, campaign_research_show, campaign_research_update, campaign_research_delete, campaign_research_reorder
 
-Task Management:
+Task Management (44 tools):
 - task_create, task_list, task_show, task_update, task_delete, task_complete
+- task_search, task_stats, task_get_dependency_info
+- task_bulk_update, task_create_from_template, task_complete_with_workflow
+- task_bulk_add_research, task_bulk_add_details
 - task_acceptance_criteria_add, task_acceptance_criteria_mark_met, task_acceptance_criteria_mark_unmet
-- task_research_add, task_implementation_notes_add, task_testing_step_add
+- task_acceptance_criteria_list, task_acceptance_criteria_show, task_acceptance_criteria_update, task_acceptance_criteria_delete, task_acceptance_criteria_reorder
+- task_research_add, task_research_list, task_research_show, task_research_update, task_research_delete, task_research_reorder
+- task_implementation_notes_add, task_implementation_notes_list, task_implementation_notes_show, task_implementation_notes_update, task_implementation_notes_delete, task_implementation_notes_reorder
+- task_testing_step_add, task_testing_strategy_add
+- task_testing_strategy_list, task_testing_strategy_show, task_testing_strategy_update, task_testing_strategy_delete
+- task_testing_strategy_mark_passed, task_testing_strategy_mark_failed, task_testing_strategy_mark_skipped, task_testing_strategy_reorder
 
 TIPS:
+
 - Use campaign_get_next_actionable_task for sequential processing
 - Use campaign_get_all_actionable_tasks for parallel execution
 - Always mark criteria as met before completing a task
 - Use campaign_workflow_guide for detailed workflow guidance
+- Use task_bulk_add_research for shared findings across tasks
+- Use task_bulk_add_details for unique details per task
+- Use campaign_list and task_list to find IDs before other operations
+- Use task_search to find tasks by text when you don't know the ID
 """,
         )
 
@@ -154,7 +180,7 @@ TIPS:
 
                 error_data = ErrorData(
                     code=INTERNAL_ERROR,
-                    message=str(e),
+                    message=sanitize_exception(e),
                     data={"tool_name": name},
                 )
                 raise McpError(error_data) from e

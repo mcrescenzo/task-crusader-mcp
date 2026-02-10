@@ -1156,4 +1156,55 @@ Returns: Updated testing step.""",
                 "required": ["task_id", "step_id", "new_order"],
             },
         ),
+        # Bulk tools
+        Tool(
+            name="task_bulk_add_research",
+            description="""Bulk add research items to multiple tasks atomically.
+
+Adds the SAME research items to ALL specified tasks in a single database transaction.
+
+Input: JSON with task_ids array and research_items array.
+Example: {"task_ids": ["task-1", "task-2"], "research_items": [{"content": "Finding", "type": "findings"}]}
+
+Research types: findings, approaches, docs.
+Transaction behavior: All-or-nothing.
+
+Returns: tasks_updated, research_added_per_task, total_research_added.
+
+Related: task_research_add (single task), task_bulk_add_details (different details per task).""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "research_json": {
+                        "type": "string",
+                        "description": 'JSON: {"task_ids": ["id1"], "research_items": [{"content": "text", "type": "findings|approaches|docs"}]}',
+                    },
+                },
+                "required": ["research_json"],
+            },
+        ),
+        Tool(
+            name="task_bulk_add_details",
+            description="""Add DIFFERENT research, notes, criteria, and testing strategy to multiple tasks atomically.
+
+Each task receives its own specific details. Unlike task_bulk_add_research which adds same content to all tasks.
+
+Input: JSON with tasks array, each having optional research, notes, criteria, testing_strategy.
+
+Transaction behavior: All-or-nothing.
+
+Returns: success_count, failed_count, per-task detail counts.
+
+Related: task_bulk_add_research (shared research), task_research_add, task_implementation_notes_add.""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "details_json": {
+                        "type": "string",
+                        "description": 'JSON: {"tasks": [{"task_id": "id", "research": [...], "notes": [...], "criteria": [...], "testing_strategy": [...]}]}',
+                    },
+                },
+                "required": ["details_json"],
+            },
+        ),
     ]

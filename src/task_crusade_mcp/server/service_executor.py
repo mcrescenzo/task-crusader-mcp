@@ -118,6 +118,9 @@ class ServiceExecutor:
                 "task_testing_strategy_mark_failed": self._handle_testing_failed,
                 "task_testing_strategy_mark_skipped": self._handle_testing_skipped,
                 "task_testing_strategy_reorder": self._handle_testing_reorder,
+                # Bulk tools
+                "task_bulk_add_research": self._handle_bulk_add_research,
+                "task_bulk_add_details": self._handle_bulk_add_details,
             }
         )
 
@@ -991,6 +994,69 @@ class ServiceExecutor:
         if result.is_success:
             return self._format_result(result.data)
         return self._format_error(result.error_message or "Reorder failed")
+
+    # --- Bulk Handlers ---
+
+    def _handle_bulk_add_research(self, args: Dict[str, Any]) -> str:
+        """Handle task_bulk_add_research tool."""
+        research_json = args.get("research_json", "")
+
+        if isinstance(research_json, str):
+            try:
+                data = json.loads(research_json)
+                if isinstance(data, str):
+                    data = json.loads(data)
+            except json.JSONDecodeError as e:
+                return self._format_error(f"Invalid JSON: {e}")
+        elif isinstance(research_json, dict):
+            data = research_json
+        else:
+            return self._format_error("research_json must be a JSON string or object")
+
+        task_ids = data.get("task_ids", [])
+        research_items = data.get("research_items", [])
+
+        if not task_ids:
+            return self._format_error("task_ids is required and must be non-empty")
+        if not research_items:
+            return self._format_error("research_items is required and must be non-empty")
+
+        service = self._factory.get_task_service()
+        result = service.bulk_add_research(
+            task_ids=task_ids,
+            research_items=research_items,
+        )
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Bulk add research failed")
+
+    def _handle_bulk_add_details(self, args: Dict[str, Any]) -> str:
+        """Handle task_bulk_add_details tool."""
+        details_json = args.get("details_json", "")
+
+        if isinstance(details_json, str):
+            try:
+                data = json.loads(details_json)
+                if isinstance(data, str):
+                    data = json.loads(data)
+            except json.JSONDecodeError as e:
+                return self._format_error(f"Invalid JSON: {e}")
+        elif isinstance(details_json, dict):
+            data = details_json
+        else:
+            return self._format_error("details_json must be a JSON string or object")
+
+        tasks = data.get("tasks", [])
+        if not tasks:
+            return self._format_error("tasks array is required and must be non-empty")
+
+        service = self._factory.get_task_service()
+        result = service.bulk_add_details(tasks=tasks)
+
+        if result.is_success:
+            return self._format_result(result.data)
+        return self._format_error(result.error_message or "Bulk add details failed")
 
     def close(self) -> None:
         """Shutdown the executor."""

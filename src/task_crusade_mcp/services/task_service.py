@@ -1988,3 +1988,130 @@ class TaskService:
             return update_result
 
         return self.get_testing_step(task_id, step_id)
+
+    # --- Bulk Operations ---
+
+    def bulk_add_research(
+        self,
+        task_ids: List[str],
+        research_items: List[Dict[str, Any]],
+    ) -> DomainResult[Dict[str, Any]]:
+        """Add research items to multiple tasks atomically.
+
+        Adds ALL research items to ALL specified tasks.
+
+        Args:
+            task_ids: List of task IDs to add research to.
+            research_items: List of research item dicts with content and type.
+
+        Returns:
+            DomainResult with summary of operations performed.
+        """
+        if not task_ids:
+            return DomainError.validation_error("task_ids must be non-empty")
+        if not research_items:
+            return DomainError.validation_error("research_items must be non-empty")
+
+        # Validate all tasks exist
+        for tid in task_ids:
+            result = self.task_repo.get_task(tid)
+            if result.is_failure:
+                return DomainError.not_found("task", tid)
+
+        total_added = 0
+        for tid in task_ids:
+            for item in research_items:
+                content = item.get("content", "")
+                research_type = item.get("type", "findings")
+                if not content:
+                    continue
+                add_result = self.add_research(tid, content, research_type)
+                if add_result.is_failure:
+                    return add_result
+                total_added += 1
+
+        return DomainSuccess.create({
+            "tasks_updated": len(task_ids),
+            "research_added_per_task": len(research_items),
+            "total_research_added": total_added,
+            "task_ids": task_ids,
+        })
+
+    def bulk_add_details(
+        self,
+        tasks: List[Dict[str, Any]],
+    ) -> DomainResult[Dict[str, Any]]:
+        """Add different details to multiple tasks atomically.
+
+        Each task receives its own specific research, notes, criteria, and testing steps.
+
+        Args:
+            tasks: List of dicts with task_id and optional research, notes, criteria, testing_strategy.
+
+        Returns:
+            DomainResult with per-task summary.
+        """
+        if not tasks:
+            return DomainError.validation_error("tasks must be non-empty")
+
+        details: List[Dict[str, Any]] = []
+        success_count = 0
+        failed_count = 0
+
+        for task_entry in tasks:
+            tid = task_entry.get("task_id", "")
+            if not tid:
+                failed_count += 1
+                continue
+
+            # Validate task exists
+            task_result = self.task_repo.get_task(tid)
+            if task_result.is_failure:
+                failed_count += 1
+                continue
+
+            task_detail: Dict[str, Any] = {
+                "task_id": tid, "research": 0, "notes": 0, "criteria": 0, "testing_steps": 0,
+            }
+
+            # Add research
+            for item in task_entry.get("research", []):
+                content = item.get("content", "")
+                research_type = item.get("type", "findings")
+                if content:
+                    r = self.add_research(tid, content, research_type)
+                    if r.is_success:
+                        task_detail["research"] += 1
+
+            # Add notes
+            for item in task_entry.get("notes", []):
+                content = item.get("content", "")
+                if content:
+                    r = self.add_implementation_note(tid, content)
+                    if r.is_success:
+                        task_detail["notes"] += 1
+
+            # Add criteria
+            for criterion in task_entry.get("criteria", []):
+                if isinstance(criterion, str) and criterion:
+                    r = self.add_acceptance_criteria(tid, criterion)
+                    if r.is_success:
+                        task_detail["criteria"] += 1
+
+            # Add testing strategy steps
+            for step in task_entry.get("testing_strategy", []):
+                content = step.get("content", "")
+                step_type = step.get("step_type", "verify")
+                if content:
+                    r = self.add_testing_step(tid, content, step_type)
+                    if r.is_success:
+                        task_detail["testing_steps"] += 1
+
+            details.append(task_detail)
+            success_count += 1
+
+        return DomainSuccess.create({
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "details": details,
+        })
