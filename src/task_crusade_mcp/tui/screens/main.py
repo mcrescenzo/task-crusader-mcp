@@ -21,6 +21,7 @@ from textual.containers import Horizontal, Vertical
 from textual.events import Resize
 from textual.widgets import Static
 
+from task_crusade_mcp.tui.constants import TOAST_NORMAL, TOAST_QUICK
 from task_crusade_mcp.tui.services.config_service import TUIConfigService
 from task_crusade_mcp.tui.services.data_service import TUIDataService
 from task_crusade_mcp.tui.widgets import (
@@ -409,7 +410,7 @@ class CampaignTaskPane(Vertical):
         """Perform the task deletion."""
         try:
             await self.data_service.delete_task(task_id)
-            self.notify("Task deleted", severity="information")
+            self.notify("Task deleted", severity="information", timeout=TOAST_NORMAL)
 
             task_data_table = self.query_one("#task-list", TaskDataTable)
             task_data_table.post_message(TaskDataTable.TaskDeleted(task_id))
@@ -426,7 +427,7 @@ class CampaignTaskPane(Vertical):
 
         except Exception as e:
             logger.error(f"Failed to delete task: {e}")
-            self.notify(f"Delete failed: {e}", severity="error")
+            self.notify("Delete failed", severity="error")
 
     @on(TaskDataTable.TaskSearchChanged)
     def on_task_data_table_task_search_changed(
@@ -487,7 +488,11 @@ class CampaignTaskPane(Vertical):
                 description=task_data.get("description", ""),
             )
 
-            self.notify(f"Task created: {task_data['title']}", severity="information")
+            self.notify(
+                f"Task created: {task_data['title']}",
+                severity="information",
+                timeout=TOAST_NORMAL,
+            )
 
             # Refresh task list and select the new task
             task_data_table = self.query_one("#task-list", TaskDataTable)
@@ -506,7 +511,7 @@ class CampaignTaskPane(Vertical):
 
         except Exception as e:
             logger.error(f"Failed to create task: {e}")
-            self.notify(f"Create failed: {e}", severity="error")
+            self.notify("Task creation failed", severity="error")
 
     # =========================================================================
     # New Campaign Creation Handlers (Phase 3.2)
@@ -540,7 +545,11 @@ class CampaignTaskPane(Vertical):
                 description=campaign_data.get("description", ""),
             )
 
-            self.notify(f"Campaign created: {campaign_data['name']}", severity="information")
+            self.notify(
+                f"Campaign created: {campaign_data['name']}",
+                severity="information",
+                timeout=TOAST_NORMAL,
+            )
 
             # Refresh campaign list and select the new campaign
             campaign_list = self.query_one("#campaign-list", CampaignListWidget)
@@ -557,7 +566,7 @@ class CampaignTaskPane(Vertical):
 
         except Exception as e:
             logger.error(f"Failed to create campaign: {e}")
-            self.notify(f"Create failed: {e}", severity="error")
+            self.notify("Campaign creation failed", severity="error")
 
     def _get_focusable_panes(
         self,
@@ -613,10 +622,11 @@ class CampaignTaskPane(Vertical):
 
             await task_detail.refresh_task()
 
-            self.notify("Data refreshed")
+            self.notify("Data refreshed", severity="information", timeout=TOAST_QUICK)
 
         except Exception as e:
-            self.notify(f"Refresh failed: {e}", severity="error")
+            logger.error(f"Failed to refresh data: {e}")
+            self.notify("Refresh failed", severity="error")
 
     def _restore_campaign_selection(
         self, campaign_list: CampaignListWidget, campaign_id: str

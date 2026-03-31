@@ -26,6 +26,8 @@ from task_crusade_mcp.tui.constants import (
     STATUS_CYCLE,
     STATUS_FILTER_OPTIONS,
     STATUS_ICONS,
+    TOAST_NORMAL,
+    TOAST_QUICK,
 )
 from task_crusade_mcp.tui.exceptions import DataFetchError, DataUpdateError
 from task_crusade_mcp.tui.services.config_service import TUIConfigService
@@ -287,7 +289,7 @@ class TaskDataTable(DataTable):
 
             except DataFetchError as e:
                 logger.error(f"Failed to fetch tasks for campaign {campaign_id}: {e}")
-                self.notify(str(e), severity="error")
+                self.notify("Failed to load tasks", severity="error")
                 self._all_tasks = []
                 self._filtered_tasks = []
                 await self._show_empty_state()
@@ -569,7 +571,7 @@ class TaskDataTable(DataTable):
 
         except DataFetchError as e:
             logger.error(f"Failed to refresh tasks for campaign {self._campaign_id}: {e}")
-            self.notify(str(e), severity="error")
+            self.notify("Failed to refresh tasks", severity="error")
             self._all_tasks = []
             self._filtered_tasks = []
             await self._show_empty_state()
@@ -673,7 +675,7 @@ class TaskDataTable(DataTable):
             self.move_cursor(row=0)
 
         self.post_message(self.TaskFilterChanged(new_filter, new_label))
-        self.notify(f"Filter: {new_label}", severity="information", timeout=1.5)
+        self.notify(f"Filter: {new_label}", severity="information", timeout=TOAST_QUICK)
 
     async def action_toggle_actionable_filter(self) -> None:
         """Toggle the actionable-only filter on/off."""
@@ -686,11 +688,11 @@ class TaskDataTable(DataTable):
             self.notify(
                 "Filter: Actionable (pending tasks ready to work on)",
                 severity="information",
-                timeout=1.5,
+                timeout=TOAST_QUICK,
             )
         else:
             filter_label = "All"
-            self.notify("Filter: Actionable filter OFF", severity="information", timeout=1.5)
+            self.notify("Filter: Actionable filter OFF", severity="information", timeout=TOAST_QUICK)
 
         filter_value = "actionable" if self._show_actionable_only else "all"
         self.post_message(self.TaskFilterChanged(filter_value, filter_label))
@@ -756,7 +758,7 @@ class TaskDataTable(DataTable):
         # Close the search input if it's open
         if self._search_active:
             await self._close_search(clear_filter=True)
-            self.notify("Search cleared", severity="information", timeout=1.5)
+            self.notify("Search cleared", severity="information", timeout=TOAST_QUICK)
             return
 
         if not self._search_query:
@@ -765,7 +767,7 @@ class TaskDataTable(DataTable):
         self._search_query = ""
         await self._apply_filters()
         self.post_message(self.TaskSearchChanged("", False))
-        self.notify("Search cleared", severity="information", timeout=1.5)
+        self.notify("Search cleared", severity="information", timeout=TOAST_QUICK)
 
     async def action_toggle_selection_mode(self) -> None:
         """Toggle selection mode on/off."""
@@ -877,6 +879,7 @@ class TaskDataTable(DataTable):
                 self.notify(
                     f"Deleted {len(task_ids)} task{'s' if len(task_ids) != 1 else ''}",
                     severity="information",
+                    timeout=TOAST_NORMAL,
                 )
 
             elif action_type == "status":
@@ -886,6 +889,7 @@ class TaskDataTable(DataTable):
                     self.notify(
                         f"Updated status for {len(task_ids)} task{'s' if len(task_ids) != 1 else ''}",
                         severity="information",
+                        timeout=TOAST_NORMAL,
                     )
 
             elif action_type == "priority":
@@ -895,6 +899,7 @@ class TaskDataTable(DataTable):
                     self.notify(
                         f"Updated priority for {len(task_ids)} task{'s' if len(task_ids) != 1 else ''}",
                         severity="information",
+                        timeout=TOAST_NORMAL,
                     )
 
             self._selected_keys.clear()
@@ -904,7 +909,7 @@ class TaskDataTable(DataTable):
 
         except Exception as e:
             logger.exception(f"Bulk operation failed: {e}")
-            self.notify(f"Bulk operation failed: {e}", severity="error")
+            self.notify("Bulk operation failed", severity="error")
 
     # =========================================================================
     # Quick Status Actions (Phase 1.1)
@@ -963,12 +968,12 @@ class TaskDataTable(DataTable):
             # Restore cursor position
             self._restore_cursor_to_task(task_id)
 
-            self.notify(f"Status: {new_status}", severity="information", timeout=1.5)
+            self.notify(f"Status: {new_status}", severity="information", timeout=TOAST_QUICK)
             self.post_message(self.TaskStatusChanged(task_id, new_status))
 
         except DataUpdateError as e:
             logger.error(f"Failed to update task status: {e}")
-            self.notify(f"Status update failed: {e}", severity="error")
+            self.notify("Status update failed", severity="error")
 
     def _restore_cursor_to_task(self, task_id: str) -> None:
         """Restore cursor to a specific task after refresh."""
@@ -1037,12 +1042,12 @@ class TaskDataTable(DataTable):
             # Restore cursor position
             self._restore_cursor_to_task(task_id)
 
-            self.notify(f"Priority: {new_priority}", severity="information", timeout=1.5)
+            self.notify(f"Priority: {new_priority}", severity="information", timeout=TOAST_QUICK)
             self.post_message(self.TaskPriorityChanged(task_id, new_priority))
 
         except DataUpdateError as e:
             logger.error(f"Failed to update task priority: {e}")
-            self.notify(f"Priority update failed: {e}", severity="error")
+            self.notify("Priority update failed", severity="error")
 
     # =========================================================================
     # Copy Shortcuts (Phase 1.3)
@@ -1055,7 +1060,7 @@ class TaskDataTable(DataTable):
             return
 
         self.app.copy_to_clipboard(task_id)
-        self.notify("Task ID copied", severity="information", timeout=1.5)
+        self.notify("Task ID copied", severity="information", timeout=TOAST_QUICK)
 
     def action_copy_task_details(self) -> None:
         """Copy the selected task's full details to clipboard."""
@@ -1077,7 +1082,7 @@ class TaskDataTable(DataTable):
 
         details = "\n".join(details_lines)
         self.app.copy_to_clipboard(details)
-        self.notify("Task details copied", severity="information", timeout=1.5)
+        self.notify("Task details copied", severity="information", timeout=TOAST_QUICK)
 
     # =========================================================================
     # Sorting (Phase 4.1)
@@ -1090,7 +1095,7 @@ class TaskDataTable(DataTable):
 
         await self._apply_filters()
 
-        self.notify(f"Sort: {sort_label}", severity="information", timeout=1.5)
+        self.notify(f"Sort: {sort_label}", severity="information", timeout=TOAST_QUICK)
 
     # =========================================================================
     # New Task Creation (Phase 3.1)

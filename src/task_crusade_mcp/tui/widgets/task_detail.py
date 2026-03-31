@@ -24,6 +24,7 @@ from task_crusade_mcp.tui.constants import (
     PRIORITY_ICONS,
     RICH_STATUS_COLORS,
     STATUS_ICONS,
+    TOAST_QUICK,
 )
 from task_crusade_mcp.tui.exceptions import DataFetchError, DataUpdateError
 from task_crusade_mcp.tui.services.data_service import TUIDataService
@@ -135,7 +136,7 @@ class TaskDetailWidget(VerticalScroll):
             logger.error(f"Failed to load task {task_id}: {e}")
 
             if current_generation == self._load_generation:
-                self.notify(str(e), severity="error")
+                self.notify("Failed to load task details", severity="error")
                 self._task_data = None
                 await self._show_error(str(e))
         finally:
@@ -188,7 +189,7 @@ class TaskDetailWidget(VerticalScroll):
             logger.error(f"Failed to load campaign {campaign_id}: {e}")
 
             if current_generation == self._load_generation:
-                self.notify(str(e), severity="error")
+                self.notify("Failed to load campaign details", severity="error")
                 self._campaign_data = None
                 await self._show_error(str(e))
         finally:
@@ -658,14 +659,22 @@ class TaskDetailWidget(VerticalScroll):
         """Handle click on campaign ID copy button."""
         if self._campaign_id:
             self.app.copy_to_clipboard(self._campaign_id)
-            self.notify("Campaign ID copied to clipboard")
+            self.notify(
+                "Campaign ID copied to clipboard",
+                severity="information",
+                timeout=TOAST_QUICK,
+            )
 
     @on(Button.Pressed, "#copy-task-id")
     def on_copy_task_id(self, event: Button.Pressed) -> None:
         """Handle click on task ID copy button."""
         if self._task_id:
             self.app.copy_to_clipboard(self._task_id)
-            self.notify("Task ID copied to clipboard")
+            self.notify(
+                "Task ID copied to clipboard",
+                severity="information",
+                timeout=TOAST_QUICK,
+            )
 
     @on(ClickableCriterion.CriterionClicked)
     def on_criterion_clicked(self, event: ClickableCriterion.CriterionClicked) -> None:
@@ -733,9 +742,11 @@ class TaskDetailWidget(VerticalScroll):
             else:
                 self.notify("Failed to update criterion", severity="error")
         except DataUpdateError as e:
-            self.notify(f"Error: {e}", severity="error")
+            logger.error(f"Failed to toggle criterion: {e}")
+            self.notify("Failed to update criterion", severity="error")
         except (NoMatches, KeyError, IndexError) as e:
-            self.notify(f"Unexpected error: {e}", severity="error")
+            logger.error(f"Unexpected error toggling criterion: {e}")
+            self.notify("Failed to update criterion", severity="error")
 
     async def _update_criterion_display(self) -> None:
         """Update the criterion display after a toggle."""

@@ -4,6 +4,10 @@ This module provides status icons, colors, priority indicators, and status cycle
 mappings used throughout the TUI interface for campaigns and tasks.
 """
 
+# Toast notification timeout constants (seconds)
+TOAST_QUICK: float = 1.5  # Filter, sort, search, copy, status/priority feedback
+TOAST_NORMAL: float = 3.0  # CRUD success, selection mode toggle
+
 # Status icons for task list display
 STATUS_ICONS: dict[str, str] = {
     "done": "✓",

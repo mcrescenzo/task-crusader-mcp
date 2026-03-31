@@ -20,6 +20,8 @@ from task_crusade_mcp.tui.constants import (
     CAMPAIGN_STATUS_COLORS,
     CAMPAIGN_STATUS_FILTER_OPTIONS,
     CAMPAIGN_STATUS_ICONS,
+    TOAST_NORMAL,
+    TOAST_QUICK,
 )
 from task_crusade_mcp.tui.exceptions import DataFetchError
 from task_crusade_mcp.tui.services.config_service import TUIConfigService
@@ -225,7 +227,7 @@ class CampaignListWidget(ListView):
 
         except DataFetchError as e:
             logger.error(f"Failed to load campaigns: {e}")
-            self.notify(str(e), severity="error")
+            self.notify("Failed to load campaigns", severity="error")
             self._all_campaigns = []
             self._filtered_campaigns = []
             await self._show_empty_state()
@@ -387,7 +389,7 @@ class CampaignListWidget(ListView):
         await self.load_campaigns()
 
         self.post_message(self.CampaignFilterChanged(new_filter, new_label))
-        self.notify(f"Filter: {new_label}", severity="information", timeout=1.5)
+        self.notify(f"Filter: {new_label}", severity="information", timeout=TOAST_QUICK)
 
     async def action_open_search(self) -> None:
         """Open search input."""
@@ -447,7 +449,7 @@ class CampaignListWidget(ListView):
         # Close the search input if it's open
         if self._search_active:
             await self._close_search(clear_filter=True)
-            self.notify("Search cleared", severity="information", timeout=1.5)
+            self.notify("Search cleared", severity="information", timeout=TOAST_QUICK)
             return
 
         if not self._search_query:
@@ -456,7 +458,7 @@ class CampaignListWidget(ListView):
         self._search_query = ""
         await self._refresh_display()
         self.post_message(self.CampaignSearchChanged("", False))
-        self.notify("Search cleared", severity="information", timeout=1.5)
+        self.notify("Search cleared", severity="information", timeout=TOAST_QUICK)
 
     async def action_delete_campaign(self) -> None:
         """Request deletion of selected campaign."""
@@ -501,13 +503,13 @@ class CampaignListWidget(ListView):
         """Perform the campaign deletion."""
         try:
             await self.data_service.delete_campaign(campaign_id)
-            self.notify("Campaign deleted", severity="information")
+            self.notify("Campaign deleted", severity="information", timeout=TOAST_NORMAL)
             self.post_message(self.CampaignDeleted(campaign_id))
             await self.refresh_campaigns()
 
         except Exception as e:
             logger.error(f"Failed to delete campaign: {e}")
-            self.notify(f"Delete failed: {e}", severity="error")
+            self.notify("Delete failed", severity="error")
 
     def action_new_campaign(self) -> None:
         """Request creation of a new campaign."""
@@ -520,4 +522,4 @@ class CampaignListWidget(ListView):
 
         await self._refresh_display()
 
-        self.notify(f"Sort: {sort_label}", severity="information", timeout=1.5)
+        self.notify(f"Sort: {sort_label}", severity="information", timeout=TOAST_QUICK)
