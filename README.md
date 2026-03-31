@@ -1,4 +1,10 @@
+
+
 # Task Crusader MCP
+
+> [!WARNING]
+> **This project is no longer maintained.**
+> I originally built Task Crusader to solve the problem of tracking long-running task and project lists for AI-assisted development. Since then, most major AI coding agents have added robust built-in task management, and this project is no longer particularly useful in practice.
 
 Your AI coding assistant's quest companion - campaign and task management via MCP.
 
@@ -13,6 +19,8 @@ Task Crusader is a campaign and task management system designed for AI coding as
 - **Progress monitoring**: Track campaign progress and find actionable tasks
 - **Quality hints**: Context-aware guidance for campaign setup and execution
 - **Sequential & parallel execution**: Support for both single-agent and multi-agent workflows
+
+![alt text](image.png)
 
 ## Installation
 
